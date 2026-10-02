@@ -113,7 +113,7 @@ function readUrl(v,i,ch){
 function chapterUrl(v,i,ch){
   var b=BOOKS[i];
   if(v.src==="dbs"){
-    var nm=pad(i+1,2)+"_"+b[2].replace(/ /g,"");
+    var nm=pad(i+1,2)+"_"+BEN[i].replace(/ /g,"");
     return "https://dbs.org/cdn/audio/RUSS76_ISA_FB_N/"+(i<OT_COUNT?"OT":"NT")+"_RUSS76/"+nm+"/"+nm+"_"+pad(ch,3)+".mp3";
   }
   if(v.src==="fcbh")return "https://live.bible.is/bible/RUSSYN/"+USFM[i]+"/"+ch;
