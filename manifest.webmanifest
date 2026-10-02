@@ -1,0 +1,12 @@
+{
+  "id": "./",
+  "name": "Bible Bridge",
+  "short_name": "Bible Bridge",
+  "description": "A Bible reading planner",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#06306f",
+  "theme_color": "#06306f"
+}
