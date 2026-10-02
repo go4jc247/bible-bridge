@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<script src="images.js"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Bible Bridge">
+<meta name="application-name" content="Bible Bridge">
+<meta name="theme-color" content="#06306f">
+<title>Bible Bridge</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=Montserrat:wght@500&family=Nunito+Sans:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+  <header class="hero">
+    <canvas id="glowCv" class="glowcv" aria-hidden="true"></canvas>
+    <h1 class="sr">Bible Bridge</h1>
+    <img class="herologo" id="heroLogo" alt="" decoding="async">
+  </header>
+  <div class="sheet">
+    <div id="tabSent" aria-hidden="true"></div>
+    <div class="tabs" role="tablist">
+      <button class="tb" id="tabPlans" role="tab" aria-selected="true"><span class="ic" id="tpi"></span><span id="tabPlansT">Reading plans</span><span class="ic go" id="tpg"></span></button>
+      <button class="tb" id="tabBible" role="tab" aria-selected="false"><span class="ic" id="tbi"></span><span id="tabBibleT">Whole Bible</span><span class="ic go" id="tbg"></span></button>
+    </div>
+    <section id="ctl"></section>
+    <section id="tab-plans"></section>
+    <section id="tab-bible" hidden></section>
+  </div>
+</div>
+<div id="glowPanel" hidden role="dialog" aria-label="Logo glow adjustments">
+  <div class="gtt"><span>Logo glow (temporary)</span></div>
+  <div class="gro"><span>Thickness</span><output id="glTo"></output></div>
+  <div class="jog" id="glT" role="slider" aria-label="Thickness" aria-valuemin="0" aria-valuemax="400"><div class="jthumb"></div></div>
+  <div class="gro"><span>Feather</span><output id="glFo"></output></div>
+  <div class="jog" id="glF" role="slider" aria-label="Feather" aria-valuemin="0" aria-valuemax="400"><div class="jthumb"></div></div>
+  <div class="gro"><span>Opacity</span><output id="glOo"></output></div>
+  <div class="jog" id="glO" role="slider" aria-label="Opacity" aria-valuemin="0" aria-valuemax="100"><div class="jthumb"></div></div>
+  <div class="gb"><button type="button" id="glR">Reset</button><button type="button" class="pri" id="glD">Done</button></div>
+</div>
+<div id="splash" role="dialog" aria-label="Bible Bridge">
+  <div class="spwrap">
+    <img id="spLogo" alt="Bible Bridge">
+    <div class="spg" id="spG1">
+      <div class="sprule"></div>
+      <div id="spTag"></div>
+    </div>
+    <div class="spg" id="spGd"><p id="spDesc"></p></div>
+    <div class="spg spchoose" id="spG2">
+      <div id="spChoose"></div>
+      <button type="button" id="spLangBtn"><span class="fl" id="spFlag"></span><span class="nm" id="spNm"></span><span id="spChev"></span></button>
+    </div>
+    <button type="button" id="spTap"></button>
+  </div>
+</div>
+<div id="screen" hidden></div>
+<div id="overlay" aria-hidden="true"><div id="sheetBox" role="dialog" aria-modal="true"></div></div>
+<div id="toast" role="status"></div>
+<script src="app.js"></script>
+</body>
+</html>
