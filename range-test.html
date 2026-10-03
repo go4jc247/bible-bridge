@@ -1,0 +1,31 @@
+<!doctype html>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Range test</title>
+<body style="font:16px sans-serif;padding:16px">
+<h3>Range request test</h3>
+<pre id="out">Running...</pre>
+<script>
+const out = document.getElementById('out');
+async function test(label, url) {
+  try {
+    const r = await fetch(url + '?t=' + Date.now(), {
+      headers: { Range: 'bytes=0-99' },
+      cache: 'no-store'
+    });
+    const body = await r.arrayBuffer();
+    return label + '\n  status: ' + r.status +
+      '\n  content-range: ' + r.headers.get('content-range') +
+      '\n  bytes received: ' + body.byteLength +
+      '\n  verdict: ' + (r.status === 206 && body.byteLength === 100 ? 'RANGE WORKS' : 'RANGE IGNORED (full file sent)') + '\n';
+  } catch (e) {
+    return label + '\n  error: ' + e.message + '\n';
+  }
+}
+(async () => {
+  let t = '';
+  t += await test('GitHub Pages', 'app.js') + '\n';
+  t += await test('raw.githubusercontent', 'https://raw.githubusercontent.com/go4jc247/bible-bridge/main/app.js');
+  out.textContent = t;
+})();
+</script>
+</body>
