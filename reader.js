@@ -233,6 +233,162 @@
     });
   }
 
+
+  /* ---------- downloads: text and audio kept on the device, but only when you ask ---------- */
+  var AUDIO_CACHE = "bbaudio-v1";                    // audio files you chose to download
+  var CH_TOTAL = 1189;                               // chapters in the Bible
+  var audioHave = {};                                // audio url -> true, for chapters saved on this device
+  var dlJobs = {}, dlSubs = [];
+
+  function loadAudioHave() {
+    try {
+      if (!window.caches) return Promise.resolve();
+      return caches.open(AUDIO_CACHE).then(function (c) { return c.keys(); }).then(function (ks) {
+        for (var i = 0; i < ks.length; i++) audioHave[ks[i].url] = true;
+      }).catch(function () {});
+    } catch (e) { return Promise.resolve(); }
+  }
+  // give an audio element a chapter: from this device when it is saved here, otherwise from the internet
+  function setSrc(el, b, c, after) {
+    var u = audioUrlFor(tr, b, c), n = el._sq = (el._sq || 0) + 1;
+    if (el._bu) { try { URL.revokeObjectURL(el._bu); } catch (e) {} el._bu = null; }
+    if (!u || !audioHave[u] || !window.caches) { el.src = u; if (after) after(); return; }
+    caches.open(AUDIO_CACHE).then(function (ca) { return ca.match(new Request(u)); })
+      .then(function (r) { return r ? r.blob() : null; })
+      .catch(function () { return null; })
+      .then(function (bl) {
+        if (el._sq !== n) return;
+        if (bl) { el._bu = URL.createObjectURL(bl); el.src = el._bu; } else { delete audioHave[u]; el.src = u; }
+        if (after) after();
+      });
+  }
+  function dlEmit() { for (var i = 0; i < dlSubs.length; i++) { try { dlSubs[i](); } catch (e) {} } }
+  function cacheStrict(name, key, body) {            // like cachePut, but says if it did not fit
+    return caches.open(name).then(function (c) { return c.put(new Request(key), body); });
+  }
+  function haveText(id) {
+    var out = {};
+    if (!window.caches) return Promise.resolve(out);
+    var re = new RegExp("bible/" + id + "\\.bbt\\?c=(\\d+)\\.(\\d+)$");
+    return caches.open(CACHE_NAME).then(function (c) { return c.keys(); }).then(function (ks) {
+      for (var i = 0; i < ks.length; i++) { var m = re.exec(ks[i].url); if (m) out[m[1] + "." + m[2]] = true; }
+      return out;
+    }).catch(function () { return out; });
+  }
+  function haveAudio(t) {
+    var out = {};
+    if (!window.caches || !t.audio) return Promise.resolve(out);
+    return loadAudioHave().then(function () { return audioHave; });
+  }
+  // how much is saved, without needing the book index (for the little icons in the version list)
+  function dlQuick(id) {
+    var t = TR[id];
+    return Promise.all([haveText(id), t && t.audio ? haveAudio(t) : Promise.resolve(null)]).then(function (r) {
+      var tx = Object.keys(r[0]).length, au = null;
+      if (r[1]) {
+        var n = 0;
+        for (var u in r[1]) if (u.indexOf(t.audio === "rst" ? DBS_BASE : KJV_BASE) === 0) n++;
+        au = n;
+      }
+      return { text: tx, audio: au, total: CH_TOTAL };
+    });
+  }
+  // full picture for one translation: every book, every chapter
+  function dlStatus(id) {
+    var t = TR[id];
+    return getIndex(id).then(function (ix) {
+      return Promise.all([haveText(id), t.audio ? haveAudio(t) : Promise.resolve(null)]).then(function (r) {
+        function build(isHave) {
+          var books = [], done = 0, total = 0;
+          for (var b = 0; b < ix.len.length; b++) {
+            var chs = [], d = 0;
+            for (var c = 1; c <= ix.len[b].length; c++) { var ok = ix.len[b][c - 1] > 0 && isHave(b, c); chs.push(ok ? 1 : 0); if (ok) d++; }
+            books.push({ done: d, total: chs.length, chs: chs }); done += d; total += chs.length;
+          }
+          return { done: done, total: total, books: books };
+        }
+        return {
+          text: build(function (b, c) { return !!r[0][b + "." + c]; }),
+          audio: r[1] ? build(function (b, c) { return !!r[1][audioUrlFor(t, b, c)]; }) : null
+        };
+      });
+    });
+  }
+  function saveText(ix, b, c) {
+    var n = ix.len[b][c - 1];
+    if (!n) return Promise.resolve();
+    var key = new URL(fileUrl(ix.id) + "?c=" + b + "." + c, location.href).href;
+    return cacheGet(fileUrl(ix.id) + "?c=" + b + "." + c).then(function (hit) {
+      if (hit && hit.byteLength === n) return;
+      return fetchRange(fileUrl(ix.id), ix.off[b][c - 1], ix.off[b][c - 1] + n - 1).then(function (res) {
+        var buf = res.part ? res.buf : res.buf.slice(ix.off[b][c - 1], ix.off[b][c - 1] + n);
+        if (buf.byteLength !== n) throw new Error("size");
+        return cacheStrict(CACHE_NAME, key, new Response(buf, { status: 200 }));
+      });
+    });
+  }
+  function saveAudio(t, b, c) {
+    var u = audioUrlFor(t, b, c);
+    if (!u || audioHave[u]) return Promise.resolve();
+    return fetch(u, { mode: "cors" }).then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.blob();
+    }).then(function (bl) {
+      return cacheStrict(AUDIO_CACHE, u, new Response(bl, { status: 200, headers: { "Content-Type": bl.type || "audio/mpeg" } }));
+    }).then(function () { audioHave[u] = true; });
+  }
+  function failText(e) {
+    if (e && (e.name === "QuotaExceededError" || /quota/i.test(e.message || ""))) return "full";
+    if (typeof navigator !== "undefined" && navigator.onLine === false) return "offline";
+    return "failed";
+  }
+  function runJob(j, ix) {
+    var t = TR[j.id];
+    (function step() {
+      if (j.paused) { j.running = false; dlEmit(); return; }
+      if (j.i >= j.list.length) { j.running = false; j.finished = true; dlEmit(); return; }
+      var p = j.list[j.i];
+      j.at = p;
+      (j.kind === "text" ? saveText(ix, p[0], p[1]) : saveAudio(t, p[0], p[1])).then(function () {
+        j.i++; j.done = j.i; dlEmit(); step();
+      }, function (e) { j.running = false; j.error = failText(e); dlEmit(); });
+    })();
+  }
+  // pairs: [[book, chapter], ...] or null for the whole Bible
+  function dlStart(id, kind, pairs) {
+    var key = id + "|" + kind;
+    if (!window.caches) { dlJobs[key] = { id: id, kind: kind, list: [], i: 0, done: 0, total: 0, running: false, error: "nocache" }; dlEmit(); return Promise.resolve(); }
+    var old = dlJobs[key];
+    if (old && old.running) return Promise.resolve();
+    return getIndex(id).then(function (ix) {
+      var list = pairs;
+      if (!list) { list = []; for (var b = 0; b < ix.len.length; b++) for (var c = 1; c <= ix.len[b].length; c++) if (ix.len[b][c - 1] > 0) list.push([b, c]); }
+      var j = { id: id, kind: kind, list: list, i: 0, done: 0, total: list.length, paused: false, running: true, error: "", finished: false, at: null };
+      dlJobs[key] = j; dlEmit(); runJob(j, ix);
+    }, function () { dlJobs[key] = { id: id, kind: kind, list: [], i: 0, done: 0, total: 0, running: false, error: failText() }; dlEmit(); });
+  }
+  function dlPause(id, kind) { var j = dlJobs[id + "|" + kind]; if (j && j.running) { j.paused = true; } }
+  function dlResume(id, kind) {
+    var j = dlJobs[id + "|" + kind];
+    if (!j || j.running || j.finished) return Promise.resolve();
+    return getIndex(id).then(function (ix) { j.paused = false; j.running = true; j.error = ""; dlEmit(); runJob(j, ix); });
+  }
+  function dlRemove(id, kind) {
+    var key = id + "|" + kind, j = dlJobs[key];
+    if (j) { j.paused = true; j.running = false; delete dlJobs[key]; }
+    if (!window.caches) return Promise.resolve();
+    if (kind === "text") {
+      var re = new RegExp("bible/" + id + "\\.bbt\\?c=");
+      return caches.open(CACHE_NAME).then(function (c) {
+        return c.keys().then(function (ks) { return Promise.all(ks.filter(function (k) { return re.test(k.url); }).map(function (k) { return c.delete(k); })); });
+      }).then(function () { dlEmit(); });
+    }
+    var t = TR[id], base = t.audio === "rst" ? DBS_BASE : KJV_BASE;
+    return caches.open(AUDIO_CACHE).then(function (c) {
+      return c.keys().then(function (ks) { return Promise.all(ks.filter(function (k) { return k.url.indexOf(base) === 0; }).map(function (k) { delete audioHave[k.url]; return c.delete(k); })); });
+    }).then(function () { dlEmit(); });
+  }
+
   /* ---------- state ---------- */
   var tr = null;               // the translation on screen
   var D = null;                // its text: D[book][chapter-1] (verse array once loaded); D[book].length = number of chapters
@@ -271,22 +427,27 @@
   function T() { return S[(tr && tr.lang) || "en"] || S.en; }
   function nm(b) { return (NAMES[(tr && tr.lang) || "en"] || NAMES.en)[b]; }
   function label(b, c) { return nm(b) + " " + c; }
-  function audioUrl(b, c) {
-    if (!tr || !tr.audio) return "";
-    if (tr.audio === "rst") {
+  function audioUrl(b, c) { return audioUrlFor(tr, b, c); }
+  function audioUrlFor(t, b, c) {
+    if (!t || !t.audio) return "";
+    if (t.audio === "rst") {
       var n = pad(b + 1, 2) + "_" + NAMES.en[b].replace(/ /g, "");
       return DBS_BASE + (b < 39 ? "OT" : "NT") + "_RUSS76/" + n + "/" + n + "_" + pad(c, 3) + ".mp3";
     }
     return KJV_BASE + pad(b + 1, 2) + "_" + KJV_AUD[b] + (NO_NUM[b] ? "" : pad(c, 3)) + ".mp3";
   }
+  var seqList = null;   // a day's reading in plan order, e.g. Genesis 2, Job 1, Isaiah 1; null = normal Bible order
+  function seqIx(p) { if (seqList) for (var i = 0; i < seqList.length; i++) if (same(seqList[i], p)) return i; return -1; }
   function nextOf(p) {
     if (!p || !D) return null;
+    if (seqList) { var si = seqIx(p); return si >= 0 && si < seqList.length - 1 ? { b: seqList[si + 1].b, c: seqList[si + 1].c } : null; }
     if (p.c < D[p.b].length) return { b: p.b, c: p.c + 1 };
     for (var nb = p.b + 1; nb < D.length; nb++) if (D[nb].length) return { b: nb, c: 1 };
     return null;
   }
   function prevOf(p) {
     if (!p || !D) return null;
+    if (seqList) { var si = seqIx(p); return si > 0 ? { b: seqList[si - 1].b, c: seqList[si - 1].c } : null; }
     if (p.c > 1) return { b: p.b, c: p.c - 1 };
     for (var pb = p.b - 1; pb >= 0; pb--) if (D[pb].length) return { b: pb, c: D[pb].length };
     return null;
@@ -563,15 +724,18 @@
     playing = { b: b, c: c };
     preloadedFor = "";
     pendingSeek = null; pendingFrac = null; rewound = false; audioT = 0; audioD = 0;
-    A.src = audioUrl(b, c);
     A.defaultPlaybackRate = rate;
     A.playbackRate = rate;
     setMsg(T().loading);
     $("#rd-seek").value = 0; $("#rd-tcur").textContent = "0:00"; $("#rd-tdur").textContent = "0:00";
-    var pr = A.play();
-    if (pr && pr.catch) pr.catch(function (e) {
-      setMsg(e && e.name === "NotAllowedError" ? T().tapStart : T().failStart);
-      updatePP();
+    setSrc(A, b, c, function () {
+      if (!playing || playing.b !== b || playing.c !== c) return;
+      A.defaultPlaybackRate = rate; A.playbackRate = rate;
+      var pr = A.play();
+      if (pr && pr.catch) pr.catch(function (e) {
+        setMsg(e && e.name === "NotAllowedError" ? T().tapStart : T().failStart);
+        updatePP();
+      });
     });
     $("#rd-ptxt").textContent = label(b, c);
     refreshPlayerVisibility();
@@ -588,9 +752,10 @@
     playing = { b: a.b, c: a.c };
     var t = Math.max(0, a.rw ? (a.t || 0) : (a.t || 0) - 10);
     audioT = t; audioD = a.d || 0; rewound = true; pendingSeek = t;
-    A.src = audioUrl(a.b, a.c);
-    A.defaultPlaybackRate = rate; A.playbackRate = rate;
-    try { A.currentTime = t; } catch (e) {}
+    setSrc(A, a.b, a.c, function () {
+      A.defaultPlaybackRate = rate; A.playbackRate = rate;
+      try { A.currentTime = t; } catch (e) {}
+    });
     $("#rd-ptxt").textContent = label(a.b, a.c);
     $("#rd-tcur").textContent = fmt(t);
     $("#rd-tdur").textContent = audioD ? fmt(audioD) : "0:00";
@@ -688,6 +853,7 @@
 
   function onEnded() {
     var ended = playing;
+    try { if (ended && typeof window.onBBChapterDone === "function") window.onBBChapterDone(tr && tr.id, ended.b, ended.c); } catch (e) {}
     var n = nextOf(ended);
     if (!n) { updatePP(); setMsg(T().end); return; }
     var cur = view === "reader" ? detectViewing() : null;
@@ -706,8 +872,7 @@
     var u = audioUrl(n.b, n.c);
     if (preloadedFor === u) return;
     preloadedFor = u;
-    P.src = u;
-    try { P.load(); } catch (e) {}
+    setSrc(P, n.b, n.c, function () { try { P.load(); } catch (e) {} });
   }
 
   function onMeta() {
@@ -749,8 +914,7 @@
     preloadedFor = "";
     audioT = t != null ? t : 0; audioD = d || 0; rewound = true;
     pendingSeek = t != null ? t : null; pendingFrac = t != null ? null : fr;
-    A.src = audioUrl(ch.b, ch.c);
-    A.defaultPlaybackRate = rate; A.playbackRate = rate;
+    setSrc(A, ch.b, ch.c, function () { A.defaultPlaybackRate = rate; A.playbackRate = rate; });
     $("#rd-ptxt").textContent = label(ch.b, ch.c);
     $("#rd-tcur").textContent = t != null ? fmt(t) : "0:00";
     $("#rd-tdur").textContent = d ? fmt(d) : "0:00";
@@ -821,6 +985,7 @@
       if (done) return; done = true; clearTimeout(t);
       a.onloadedmetadata = a.ondurationchange = a.onerror = null;
       try { a.removeAttribute("src"); a.load(); } catch (e) {}
+      if (a._bu) { try { URL.revokeObjectURL(a._bu); } catch (e) {} a._bu = null; }
       if (v > 0) lenCache[k] = v;
       var cbs = probing[k]; delete probing[k];
       for (var i = 0; i < cbs.length; i++) if (cbs[i]) cbs[i](v || 0);
@@ -829,7 +994,7 @@
     a.onloadedmetadata = check; a.ondurationchange = check;
     a.onerror = function () { fin(0); };
     t = setTimeout(function () { fin(0); }, 20000);
-    a.preload = "metadata"; a.src = audioUrl(ch.b, ch.c); try { a.load(); } catch (e) {}
+    a.preload = "metadata"; setSrc(a, ch.b, ch.c, function () { try { a.load(); } catch (e) {} });
   }
   function charMap(sec) {
     if (sec._cm) return sec._cm;
@@ -1035,6 +1200,12 @@
     build();
     b = Math.max(0, Math.min(65, b | 0)); c = Math.max(1, c | 0);
     var st = o.resume ? loadState() : null;
+    seqList = null;
+    if (o.list && o.list.length) {
+      seqList = [];
+      for (var li = 0; li < o.list.length; li++) { var q = { b: o.list[li].b | 0, c: o.list[li].c | 0 }; if (seqIx(q) < 0) seqList.push(q); }
+      if (seqList.length < 2) seqList = null; else { b = seqList[0].b; c = seqList[0].c; }
+    }
     enter(o.noPush);
     if (tr !== t) { stopAudio(); setTr(t); }
     else if (!o.resume && playing && !(same(playing, { b: b, c: c }))) stopAudio();
@@ -1171,9 +1342,16 @@
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else boot();
 
+  loadAudioHave();
   tell("ready");
 
   window.BBReader = {
+    dl: {
+      quick: dlQuick, status: dlStatus, start: dlStart, pause: dlPause, resume: dlResume, remove: dlRemove,
+      job: function (id, kind) { return dlJobs[id + "|" + kind] || null; },
+      on: function (fn) { dlSubs.push(fn); }, off: function (fn) { var i = dlSubs.indexOf(fn); if (i >= 0) dlSubs.splice(i, 1); },
+      supported: function () { return !!window.caches; }
+    },
     open: open,
     close: function () { close(false); },
     saved: savedSpot,
