@@ -37,6 +37,8 @@
   <select id="src">
     <option value="kjv">KJV · John 1 (AudioTreasure)</option>
     <option value="rst">Russian Synodal · John 1 (Digital Bible Society)</option>
+    <option value="zip">AudioTreasure zip · 3 John (small, 420 KB)</option>
+    <option value="zipbig">AudioTreasure zip · John (26 MB, Wi‑Fi)</option>
     <option value="custom">My own address…</option>
   </select>
   <input type="text" id="custom" placeholder="https://…mp3" style="display:none" autocapitalize="off" autocorrect="off">
@@ -73,6 +75,8 @@ function pad(n,w){n=String(n);while(n.length<w)n="0"+n;return n}
 function srcUrl(){
   var v=$("#src").value;
   if(v==="kjv")return "https://www.audiotreasure.com/content/KJV_AT/43_John001.mp3";
+  if(v==="zip")return "https://www.audiotreasure.com/content/KJV_AT/zipfiles/3John_KJV_mp3_complete.zip";
+  if(v==="zipbig")return "https://www.audiotreasure.com/content/KJV_AT/zipfiles/John_KJV_mp3_complete.zip";
   if(v==="rst")return "https://dbs.org/cdn/audio/RUSS76_ISA_FB_N/NT_RUSS76/43_John/43_John_001.mp3";
   return $("#custom").value.trim();
 }
@@ -195,10 +199,13 @@ add("store","s-opfs","Private file storage (OPFS)","Real files inside the app's 
 
 /* ---------- real audio ---------- */
 function needUrl(){var u=srcUrl();if(!u)throw new Error("enter an address first");return u}
+function isZip(){return /\.zip(\?|$)/i.test(srcUrl())}
 add("net","n-play","1. Plays from the internet (what works today)","A plain audio player, no special permission.",function(){
+  if(isZip())return {ok:false,skip:true,msg:"a zip file is not audio, so this check does not apply"};
   return audioProbe(needUrl(),false,20000);
 });
 add("net","n-corsplay","2. Player with 'read access' requested","Same file, but asking the host for permission to read it. If this fails while 1 works, the host is not giving that permission (CORS).",function(){
+  if(isZip())return {ok:false,skip:true,msg:"a zip file is not audio, so this check does not apply"};
   return audioProbe(needUrl(),true,20000).then(function(r){if(!r.ok)r.msg+=" — the host did not give read permission";return r});
 });
 add("net","n-range","3. Code fetch, first 1 KB only","The smallest possible permission check.",function(){
@@ -213,6 +220,7 @@ add("net","n-nocors","4. Same fetch without permission check ('opaque')","If thi
 });
 add("net","n-rec","5. Record while playing","Plays the chapter for 6 seconds and records it. Needs read permission too.",function(){
   var u=needUrl();
+  if(isZip())return {ok:false,skip:true,msg:"a zip file is not audio, so this check does not apply"};
   if(!window.MediaRecorder)return {ok:false,skip:true,msg:"this browser has no recorder"};
   var a=new Audio();a.crossOrigin="anonymous";a.src=u;
   var cap=a.captureStream||a.mozCaptureStream;
@@ -233,9 +241,10 @@ add("net","n-full","6. Download the whole file with code","This is exactly what 
       saved={bytes:bytes,type:type};
       return caches.open("tester-audio").then(function(c){return c.put(u,new Response(new Blob([bytes],{type:type}),{status:200,headers:{"Content-Type":type}}))})
         .then(function(){return caches.open("tester-audio").then(function(c){return c.match(u)})}).then(function(m){return m.blob()})
-        .then(function(b){return playableBlob(bytes,type).then(function(p){
+        .then(function(b){return (isZip()?Promise.resolve({ok:true,msg:""}):playableBlob(bytes,type)).then(function(p){
           addSaveButtons(t.id);
-          return {ok:b.size===bytes.length&&p.ok,msg:"downloaded "+mb(bytes.length)+", saved in the Cache API, read back "+mb(b.size)+"; plays from the saved copy: "+(p.ok?"yes":"NO ("+p.msg+")")};
+          var head=bytes.length>3?String.fromCharCode(bytes[0],bytes[1]):"";
+          return {ok:b.size===bytes.length&&p.ok&&(!isZip()||head==="PK"),msg:"downloaded "+mb(bytes.length)+", saved in the Cache API, read back "+mb(b.size)+(isZip()?"; looks like a real zip: "+(head==="PK"?"yes":"NO"):"; plays from the saved copy: "+(p.ok?"yes":"NO ("+p.msg+")"))};
         })});
     });
   });
@@ -295,7 +304,8 @@ function ok(id){return results[id]&&results[id].ok}
 function ran(id){return !!results[id]&&!results[id].skip}
 function verdict(){
   var o=[];
-  if(ran("n-play")&&!ok("n-play"))o.push("The file could not even be played from this page: the address or the host is the problem, not saving.");
+  if(ran("n-play")&&!ok("n-play")&&!isZip())o.push("The file could not even be played from this page: the address or the host is the problem, not saving.");
+  if(ran("n-full")&&isZip()&&ok("n-full"))o.push("✔ The zip files CAN be downloaded by the app itself.");
   var direct=ok("n-full")||ok("n-xhr")||ok("n-chunk")||ok("n-range");
   if(ran("n-full")||ran("n-range")||ran("n-xhr")||ran("n-chunk")||ran("n-corsplay")){
     if(ok("n-full"))o.push("✔ The app CAN save this audio directly. The Download button should work from this page's address — if it still sticks in the app, the problem is in the app, not the host.");
