@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Bible Bridge audio save tester</title>
+<style>
+  :root{--bg:#f6f4ee;--card:#fff;--ink:#14213d;--muted:#5d6678;--line:#e3e0d6;--navy:#1d3258;--ok:#2f9a2d;--bad:#c0392b;--wait:#b7791f}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.4 -apple-system,system-ui,sans-serif;padding:max(14px,env(safe-area-inset-top)) 14px 40px}
+  h1{font-size:22px;margin:6px 0 4px}
+  h2{font-size:15px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:22px 0 8px}
+  p{margin:6px 0;color:var(--muted);font-size:14px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px;margin:8px 0}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .t{font-weight:600;flex:1;min-width:150px}
+  .badge{font-size:12px;font-weight:700;border-radius:99px;padding:3px 9px;background:#e8eaf0;color:var(--muted)}
+  .badge.ok{background:#dff3dc;color:var(--ok)}.badge.bad{background:#fbe0dc;color:var(--bad)}.badge.run{background:#fdf0d2;color:var(--wait)}
+  .d{font-size:13px;color:var(--muted);margin-top:6px;word-break:break-word;white-space:pre-wrap}
+  button,select,input{font:inherit}
+  button{border:0;border-radius:10px;background:var(--navy);color:#fff;padding:9px 14px;font-weight:600}
+  button.s{background:#e6ebf5;color:var(--navy);padding:6px 11px;font-size:14px}
+  button:disabled{opacity:.5}
+  select,input[type=text]{width:100%;padding:9px;border-radius:10px;border:1px solid var(--line);background:#fff;color:var(--ink);margin-top:6px}
+  #verdict{font-weight:600;white-space:pre-wrap;color:var(--ink)}
+  #log{width:100%;height:160px;border:1px solid var(--line);border-radius:10px;padding:8px;font:12px/1.35 ui-monospace,Menlo,monospace;background:#fff;color:var(--ink)}
+  .bar{height:6px;background:#e8eaf0;border-radius:3px;overflow:hidden;margin-top:8px;display:none}
+  .bar i{display:block;height:100%;width:0;background:var(--navy)}
+</style>
+</head>
+<body>
+<h1>Audio save tester</h1>
+<p>Tries several ways to keep an audio file on this device and shows which ones work. Nothing here changes the app.</p>
+
+<div class="card">
+  <b>Which file to test</b>
+  <select id="src">
+    <option value="kjv">KJV · John 1 (AudioTreasure)</option>
+    <option value="rst">Russian Synodal · John 1 (Digital Bible Society)</option>
+    <option value="zip">AudioTreasure zip · 3 John (small, 420 KB)</option>
+    <option value="zipbig">AudioTreasure zip · John (26 MB, Wi‑Fi)</option>
+    <option value="custom">My own address…</option>
+  </select>
+  <input type="text" id="custom" placeholder="https://…mp3" style="display:none" autocapitalize="off" autocorrect="off">
+  <p id="urlShow" style="word-break:break-all"></p>
+  <div class="row" style="margin-top:8px">
+    <button id="runQuick">Run quick checks</button>
+    <button id="runFull">Run full downloads</button>
+  </div>
+  <p>Quick checks use almost no data. Full downloads fetch the whole chapter several times (a few MB each) and are best on Wi‑Fi.</p>
+</div>
+
+<div class="card"><b>What it adds up to</b><div id="verdict" class="d" style="color:var(--ink)">Run the checks to see.</div>
+  <div class="row" style="margin-top:8px"><button class="s" id="copy">Copy full report</button><button class="s" id="clear">Clear test data</button></div></div>
+
+<h2>This device</h2>
+<div id="g-env"></div>
+<h2>Keeping a file here (no internet needed)</h2>
+<p>Uses a made‑up 2 MB file, so this shows whether the phone lets the app store audio at all.</p>
+<div id="g-store"></div>
+<h2>Getting the real audio file</h2>
+<div id="g-net"></div>
+
+<h2>Log</h2>
+<textarea id="log" readonly></textarea>
+
+<script>
+(function(){
+"use strict";
+var $=function(s){return document.querySelector(s)};
+var results={}, tests=[], saved=null;
+
+/* ---------- source ---------- */
+function pad(n,w){n=String(n);while(n.length<w)n="0"+n;return n}
+function srcUrl(){
+  var v=$("#src").value;
+  if(v==="kjv")return "https://www.audiotreasure.com/content/KJV_AT/43_John001.mp3";
+  if(v==="zip")return "https://www.audiotreasure.com/content/KJV_AT/zipfiles/3John_KJV_mp3_complete.zip";
+  if(v==="zipbig")return "https://www.audiotreasure.com/content/KJV_AT/zipfiles/John_KJV_mp3_complete.zip";
+  if(v==="rst")return "https://dbs.org/cdn/audio/RUSS76_ISA_FB_N/NT_RUSS76/43_John/43_John_001.mp3";
+  return $("#custom").value.trim();
+}
+function showUrl(){$("#custom").style.display=$("#src").value==="custom"?"":"none";$("#urlShow").textContent=srcUrl()||"(enter an address)"}
+$("#src").onchange=showUrl;$("#custom").oninput=showUrl;showUrl();
+
+/* ---------- helpers ---------- */
+var logEl=$("#log");
+function log(s){logEl.value+=new Date().toLocaleTimeString()+"  "+s+"\n";logEl.scrollTop=logEl.scrollHeight}
+function mb(n){return n>=1048576?(n/1048576).toFixed(2)+" MB":Math.round(n/1024)+" KB"}
+function errText(e){return (e&&e.name?e.name+": ":"")+(e&&e.message?e.message:String(e))}
+function tfetch(url,opts,ms){
+  opts=opts||{};var ac=new AbortController(),to=setTimeout(function(){ac.abort()},ms||20000);
+  opts.signal=ac.signal;
+  return fetch(url,opts).then(function(r){clearTimeout(to);return r},function(e){clearTimeout(to);if(e&&e.name==="AbortError")throw new Error("no answer after "+((ms||20000)/1000)+" s (stuck)");throw e});
+}
+function readAll(resp,onProg,stallMs){
+  stallMs=stallMs||15000;
+  if(!resp.body||!resp.body.getReader)return resp.arrayBuffer().then(function(b){return new Uint8Array(b)});
+  var rd=resp.body.getReader(),chunks=[],got=0;
+  return new Promise(function(res,rej){
+    var timer=null;
+    function arm(){clearTimeout(timer);timer=setTimeout(function(){try{rd.cancel()}catch(e){}rej(new Error("stalled: no data for "+stallMs/1000+" s after "+mb(got)))},stallMs)}
+    function pump(){
+      rd.read().then(function(x){
+        if(x.done){clearTimeout(timer);var out=new Uint8Array(got),o=0;chunks.forEach(function(c){out.set(c,o);o+=c.length});return res(out)}
+        chunks.push(x.value);got+=x.value.length;arm();if(onProg)onProg(got);pump();
+      },function(e){clearTimeout(timer);rej(e)});
+    }
+    arm();pump();
+  });
+}
+function audioProbe(url,cors,ms){
+  return new Promise(function(res){
+    var a=new Audio();a.preload="metadata";if(cors)a.crossOrigin="anonymous";
+    var done=false,t=setTimeout(function(){fin({ok:false,msg:"no answer after "+ms/1000+" s"})},ms||15000);
+    function fin(r){if(done)return;done=true;clearTimeout(t);try{a.removeAttribute("src");a.load()}catch(e){}res(r)}
+    a.onloadedmetadata=function(){fin({ok:true,msg:"loads, length "+Math.round(a.duration)+" s"})};
+    a.onerror=function(){fin({ok:false,msg:"the player could not load it ("+(a.error?"code "+a.error.code:"error")+")"})};
+    a.src=url;
+  });
+}
+function playableBlob(bytes,type){
+  var bl=new Blob([bytes],{type:type||"audio/mpeg"}),u=URL.createObjectURL(bl);
+  return audioProbe(u,false,8000).then(function(r){URL.revokeObjectURL(u);return r});
+}
+function setProg(id,frac){var b=$("#bar-"+id);if(!b)return;b.style.display="block";b.firstChild.style.width=Math.round(frac*100)+"%"}
+
+/* ---------- test registry ---------- */
+function add(group,id,title,about,fn,kind){
+  var card=document.createElement("div");card.className="card";
+  card.innerHTML='<div class="row"><div class="t"></div><span class="badge" id="b-'+id+'">not run</span><button class="s" id="r-'+id+'">Run</button></div><p></p><div class="bar" id="bar-'+id+'"><i></i></div><div class="d" id="d-'+id+'"></div><div class="row" id="x-'+id+'" style="margin-top:6px"></div>';
+  card.querySelector(".t").textContent=title;card.querySelector("p").textContent=about;
+  $("#g-"+group).appendChild(card);
+  var t={id:id,title:title,kind:kind||"quick",fn:fn};tests.push(t);
+  $("#r-"+id).onclick=function(){run(t)};
+}
+function run(t){
+  var b=$("#b-"+t.id),d=$("#d-"+t.id),btn=$("#r-"+t.id);
+  b.className="badge run";b.textContent="running…";d.textContent="";$("#x-"+t.id).innerHTML="";btn.disabled=true;
+  var t0=Date.now();log("▶ "+t.title);
+  var p;try{p=Promise.resolve(t.fn(t))}catch(e){p=Promise.reject(e)}
+  return p.then(function(r){return r},function(e){return {ok:false,msg:errText(e)}}).then(function(r){
+    var s=((Date.now()-t0)/1000).toFixed(1)+" s";
+    results[t.id]={ok:r.ok,msg:r.msg,title:t.title,skip:!!r.skip};
+    b.className="badge "+(r.skip?"":(r.ok?"ok":"bad"));b.textContent=r.skip?"skipped":(r.ok?"works":"fails");
+    d.textContent=r.msg+"  ("+s+")";btn.disabled=false;
+    log((r.ok?"✔ ":"✘ ")+t.title+" — "+r.msg);verdict();return r;
+  });
+}
+function runList(list){
+  var btns=[$("#runQuick"),$("#runFull")];btns.forEach(function(b){b.disabled=true});
+  return list.reduce(function(p,t){return p.then(function(){return run(t)})},Promise.resolve()).then(function(){btns.forEach(function(b){b.disabled=false})});
+}
+$("#runQuick").onclick=function(){runList(tests.filter(function(t){return t.kind==="quick"}))};
+$("#runFull").onclick=function(){runList(tests.filter(function(t){return t.kind==="full"}))};
+
+/* ---------- device ---------- */
+add("env","env","Device and storage","What this browser allows.",function(){
+  var o=[];
+  o.push("page address: "+location.origin);
+  o.push("installed to Home Screen: "+((navigator.standalone||matchMedia("(display-mode: standalone)").matches)?"yes":"no (opened in Safari)"));
+  o.push("Cache API: "+(window.caches?"yes":"NO"));
+  o.push("IndexedDB: "+(window.indexedDB?"yes":"NO"));
+  o.push("private file storage (OPFS): "+((navigator.storage&&navigator.storage.getDirectory)?"yes":"no"));
+  o.push("MediaRecorder: "+(window.MediaRecorder?"yes":"no"));
+  o.push("online: "+navigator.onLine);
+  var ps=[];
+  if(navigator.storage&&navigator.storage.estimate)ps.push(navigator.storage.estimate().then(function(e){o.push("storage space: about "+mb(e.quota||0)+" allowed, "+mb(e.usage||0)+" used")}));
+  if(navigator.storage&&navigator.storage.persisted)ps.push(navigator.storage.persisted().then(function(p){o.push("kept permanently (not auto‑cleared): "+(p?"yes":"not guaranteed")+" — iPhone can clear web storage after about 7 days without use unless the app is on the Home Screen")}));
+  return Promise.all(ps).then(function(){return {ok:!!(window.caches&&window.indexedDB),msg:o.join("\n")}});
+});
+
+/* ---------- storage with fake data ---------- */
+function fake(n){var u=new Uint8Array(n);for(var i=0;i<n;i+=4096)u[i]=i%251;return u}
+add("store","s-cache","Cache API","What the app uses now for saved audio.",function(){
+  var data=fake(2097152);
+  return caches.open("tester-fake").then(function(c){return c.put("/fake-audio",new Response(new Blob([data],{type:"audio/mpeg"}),{status:200,headers:{"Content-Type":"audio/mpeg"}})).then(function(){return c.match("/fake-audio")})})
+   .then(function(r){return r.blob()}).then(function(b){return {ok:b.size===data.length,msg:"saved and read back "+mb(b.size)}});
+});
+add("store","s-idb","IndexedDB","A second place to keep files.",function(){
+  var data=new Blob([fake(2097152)],{type:"audio/mpeg"});
+  return new Promise(function(res,rej){
+    var q=indexedDB.open("tester-fake",1);
+    q.onupgradeneeded=function(){q.result.createObjectStore("f")};
+    q.onerror=function(){rej(q.error)};
+    q.onsuccess=function(){var db=q.result,tx=db.transaction("f","readwrite");tx.objectStore("f").put(data,"a");
+      tx.oncomplete=function(){var g=db.transaction("f").objectStore("f").get("a");g.onsuccess=function(){db.close();res({ok:!!g.result&&g.result.size===data.size,msg:"saved and read back "+mb(g.result?g.result.size:0)})};g.onerror=function(){rej(g.error)}};
+      tx.onerror=function(){rej(tx.error)}};
+  });
+});
+add("store","s-opfs","Private file storage (OPFS)","Real files inside the app's private area.",function(){
+  if(!(navigator.storage&&navigator.storage.getDirectory))return {ok:false,skip:true,msg:"not supported on this device"};
+  var data=fake(2097152);
+  return navigator.storage.getDirectory().then(function(d){return d.getFileHandle("tester-fake.bin",{create:true})}).then(function(h){
+    if(!h.createWritable)return {ok:false,skip:true,msg:"can read files but not write them here"};
+    return h.createWritable().then(function(w){return w.write(data).then(function(){return w.close()})}).then(function(){return h.getFile()}).then(function(f){return {ok:f.size===data.length,msg:"saved and read back "+mb(f.size)}});
+  });
+});
+
+/* ---------- real audio ---------- */
+function needUrl(){var u=srcUrl();if(!u)throw new Error("enter an address first");return u}
+function isZip(){return /\.zip(\?|$)/i.test(srcUrl())}
+add("net","n-play","1. Plays from the internet (what works today)","A plain audio player, no special permission.",function(){
+  if(isZip())return {ok:false,skip:true,msg:"a zip file is not audio, so this check does not apply"};
+  return audioProbe(needUrl(),false,20000);
+});
+add("net","n-corsplay","2. Player with 'read access' requested","Same file, but asking the host for permission to read it. If this fails while 1 works, the host is not giving that permission (CORS).",function(){
+  if(isZip())return {ok:false,skip:true,msg:"a zip file is not audio, so this check does not apply"};
+  return audioProbe(needUrl(),true,20000).then(function(r){if(!r.ok)r.msg+=" — the host did not give read permission";return r});
+});
+add("net","n-range","3. Code fetch, first 1 KB only","The smallest possible permission check.",function(){
+  var u=needUrl();
+  return tfetch(u,{mode:"cors",headers:{Range:"bytes=0-1023"}},15000).then(function(r){
+    return r.arrayBuffer().then(function(b){return {ok:r.ok||r.status===206,msg:"status "+r.status+", got "+b.byteLength+" bytes"+(r.redirected?"\nredirected to: "+r.url:"")+"\n"+(r.status===206?"host supports partial downloads":"host sent the whole file instead of a piece")}});
+  });
+});
+add("net","n-nocors","4. Same fetch without permission check ('opaque')","If this works but 3 fails, the host is reachable and only the permission is missing.",function(){
+  var u=needUrl();
+  return tfetch(u,{mode:"no-cors",headers:{}},15000).then(function(r){return {ok:r.type==="opaque"||r.ok,msg:"answer came back as '"+r.type+"' (the app cannot look inside an opaque answer)"}});
+});
+add("net","n-rec","5. Record while playing","Plays the chapter for 6 seconds and records it. Needs read permission too.",function(){
+  var u=needUrl();
+  if(isZip())return {ok:false,skip:true,msg:"a zip file is not audio, so this check does not apply"};
+  if(!window.MediaRecorder)return {ok:false,skip:true,msg:"this browser has no recorder"};
+  var a=new Audio();a.crossOrigin="anonymous";a.src=u;
+  var cap=a.captureStream||a.mozCaptureStream;
+  if(!cap)return {ok:false,skip:true,msg:"this browser cannot capture an audio player (iPhone Safari usually cannot)"};
+  return a.play().then(function(){
+    var st=cap.call(a),rec=new MediaRecorder(st),parts=[];
+    rec.ondataavailable=function(e){if(e.data&&e.data.size)parts.push(e.data)};
+    rec.start();
+    return new Promise(function(res){setTimeout(function(){rec.onstop=function(){a.pause();var n=0;parts.forEach(function(p){n+=p.size});res({ok:n>2000,msg:"recorded "+mb(n)+" in 6 s (a recording runs at normal speed, so a whole chapter takes as long as listening)"})};rec.stop()},6000)});
+  });
+});
+add("net","n-full","6. Download the whole file with code","This is exactly what the app's Download button does. Shows progress and says if it stalls.",function(t){
+  var u=needUrl();
+  return tfetch(u,{mode:"cors"},20000).then(function(r){
+    if(!r.ok)throw new Error("HTTP "+r.status);
+    var total=+r.headers.get("content-length")||0,type=r.headers.get("content-type")||"audio/mpeg";
+    return readAll(r,function(g){if(total)setProg(t.id,g/total);$("#d-"+t.id).textContent="received "+mb(g)+(total?" of "+mb(total):"")}).then(function(bytes){
+      saved={bytes:bytes,type:type};
+      return caches.open("tester-audio").then(function(c){return c.put(u,new Response(new Blob([bytes],{type:type}),{status:200,headers:{"Content-Type":type}}))})
+        .then(function(){return caches.open("tester-audio").then(function(c){return c.match(u)})}).then(function(m){return m.blob()})
+        .then(function(b){return (isZip()?Promise.resolve({ok:true,msg:""}):playableBlob(bytes,type)).then(function(p){
+          addSaveButtons(t.id);
+          var head=bytes.length>3?String.fromCharCode(bytes[0],bytes[1]):"";
+          return {ok:b.size===bytes.length&&p.ok&&(!isZip()||head==="PK"),msg:"downloaded "+mb(bytes.length)+", saved in the Cache API, read back "+mb(b.size)+(isZip()?"; looks like a real zip: "+(head==="PK"?"yes":"NO"):"; plays from the saved copy: "+(p.ok?"yes":"NO ("+p.msg+")"))};
+        })});
+    });
+  });
+},"full");
+add("net","n-xhr","7. Download with the older method (XMLHttpRequest)","Same permission rules, but a different engine.",function(t){
+  var u=needUrl();
+  return new Promise(function(res,rej){
+    var x=new XMLHttpRequest();x.open("GET",u);x.responseType="blob";x.timeout=60000;
+    x.onprogress=function(e){if(e.lengthComputable)setProg(t.id,e.loaded/e.total);$("#d-"+t.id).textContent="received "+mb(e.loaded)};
+    x.onload=function(){x.status>=200&&x.status<300?res({ok:true,msg:"downloaded "+mb(x.response.size)}):rej(new Error("HTTP "+x.status))};
+    x.onerror=function(){rej(new Error("blocked or unreachable (status "+x.status+")"))};x.ontimeout=function(){rej(new Error("timed out after 60 s"))};
+    x.send();
+  });
+},"full");
+add("net","n-chunk","8. Download in small pieces (512 KB at a time)","Some hosts only give full files if asked in pieces. Needs read permission as well.",function(t){
+  var u=needUrl(),CH=524288,parts=[],got=0;
+  function next(start){
+    return tfetch(u,{mode:"cors",headers:{Range:"bytes="+start+"-"+(start+CH-1)}},20000).then(function(r){
+      if(r.status===200&&start===0)return r.arrayBuffer().then(function(b){parts.push(new Uint8Array(b));got+=b.byteLength;return "whole"});
+      if(r.status===416)return "done";
+      if(r.status!==206)throw new Error("HTTP "+r.status);
+      var cr=r.headers.get("content-range")||"",tot=+(cr.split("/")[1])||0;
+      return r.arrayBuffer().then(function(b){parts.push(new Uint8Array(b));got+=b.byteLength;if(tot)setProg(t.id,got/tot);$("#d-"+t.id).textContent="received "+mb(got);return (tot&&got>=tot)||b.byteLength<CH?"done":next(start+CH)});
+    });
+  }
+  return next(0).then(function(how){return {ok:got>10000,msg:(how==="whole"?"host ignored the piece request and sent the whole file: ":"downloaded in pieces: ")+mb(got)}});
+},"full");
+var RELAYS=[["a public relay (corsproxy.io)","https://corsproxy.io/?url="],["a public relay (allorigins.win)","https://api.allorigins.win/raw?url="]];
+RELAYS.forEach(function(rl,i){
+  add("net","n-relay"+i,(9+i)+". Through "+rl[0]+" — test only","Tests whether a go‑between server could fetch the file for the app. Only for this test; the file passes through a third party.",function(t){
+    var u=needUrl();
+    return tfetch(rl[1]+encodeURIComponent(u),{mode:"cors"},25000).then(function(r){
+      if(!r.ok)throw new Error("HTTP "+r.status);
+      return readAll(r,function(g){$("#d-"+t.id).textContent="received "+mb(g)},20000).then(function(bytes){
+        return playableBlob(bytes,"audio/mpeg").then(function(p){return {ok:bytes.length>100000&&p.ok,msg:"downloaded "+mb(bytes.length)+"; plays: "+(p.ok?"yes":"no — "+p.msg)}});
+      });
+    });
+  },"full");
+});
+
+/* ---------- save to Files / share (manual, works from any downloaded copy) ---------- */
+function addSaveButtons(id){
+  var x=$("#x-"+id);x.innerHTML="";
+  var b1=document.createElement("button");b1.className="s";b1.textContent="Save to Files / Share";
+  b1.onclick=function(){
+    if(!saved)return;var f;try{f=new File([saved.bytes],"John-1.mp3",{type:saved.type})}catch(e){f=null}
+    if(f&&navigator.canShare&&navigator.canShare({files:[f]}))navigator.share({files:[f]}).catch(function(e){log("share: "+errText(e))});
+    else{var a=document.createElement("a");a.href=URL.createObjectURL(new Blob([saved.bytes],{type:saved.type}));a.download="John-1.mp3";document.body.appendChild(a);a.click();a.remove()}
+  };
+  var b2=document.createElement("button");b2.className="s";b2.textContent="Play the saved copy";
+  b2.onclick=function(){if(!saved)return;var a=new Audio(URL.createObjectURL(new Blob([saved.bytes],{type:saved.type})));a.playbackRate=0.75;a.play().catch(function(e){log("play: "+errText(e))})};
+  x.appendChild(b1);x.appendChild(b2);
+}
+
+/* ---------- verdict + report ---------- */
+function ok(id){return results[id]&&results[id].ok}
+function ran(id){return !!results[id]&&!results[id].skip}
+function verdict(){
+  var o=[];
+  if(ran("n-play")&&!ok("n-play")&&!isZip())o.push("The file could not even be played from this page: the address or the host is the problem, not saving.");
+  if(ran("n-full")&&isZip()&&ok("n-full"))o.push("✔ The zip files CAN be downloaded by the app itself.");
+  var direct=ok("n-full")||ok("n-xhr")||ok("n-chunk")||ok("n-range");
+  if(ran("n-full")||ran("n-range")||ran("n-xhr")||ran("n-chunk")||ran("n-corsplay")){
+    if(ok("n-full"))o.push("✔ The app CAN save this audio directly. The Download button should work from this page's address — if it still sticks in the app, the problem is in the app, not the host.");
+    else if(direct)o.push("◐ Some direct methods work (see below). The app can be changed to use them.");
+    else if(ran("n-full")||ran("n-range")){
+      if(ok("n-nocors")||ok("n-play"))o.push("✘ The host lets this page play the file but not read it, so the app cannot save it itself (this is the CORS block).");
+      else o.push("✘ Direct saving fails and the file could not be reached any other way here either.");
+    }
+  }
+  if(ran("n-relay0")||ran("n-relay1")){
+    if(ok("n-relay0")||ok("n-relay1"))o.push("✔ A go‑between server can fetch it, so a small proxy of our own would work.");
+    else o.push("✘ The public go‑between servers did not work either (that does not rule out a proxy of our own).");
+  }
+  if(ran("s-cache")&&!ok("s-cache"))o.push("✘ This phone would not store a file in the Cache API at all.");
+  if(ran("n-rec")&&ok("n-rec"))o.push("✔ Recording while playing works as a fallback (real time only).");
+  $("#verdict").textContent=o.length?o.join("\n\n"):"Run the checks to see.";
+}
+function report(){
+  var s="Bible Bridge audio tester\n"+new Date().toString()+"\npage: "+location.href+"\nfile: "+srcUrl()+"\nbrowser: "+navigator.userAgent+"\n\n";
+  tests.forEach(function(t){var r=results[t.id];s+=(r?(r.skip?"SKIPPED":(r.ok?"WORKS  ":"FAILS  ")):"not run")+"  "+t.title+(r?"\n        "+r.msg.replace(/\n/g,"\n        "):"")+"\n"});
+  return s+"\nVerdict:\n"+$("#verdict").textContent+"\n";
+}
+$("#copy").onclick=function(){
+  var s=report();
+  (navigator.clipboard&&navigator.clipboard.writeText?navigator.clipboard.writeText(s):Promise.reject()).then(function(){$("#copy").textContent="Copied ✓"},function(){logEl.value=s;logEl.select();$("#copy").textContent="Report is in the log box — select and copy"});
+  setTimeout(function(){$("#copy").textContent="Copy full report"},3500);
+};
+$("#clear").onclick=function(){
+  var ps=[];["tester-fake","tester-audio"].forEach(function(n){if(window.caches)ps.push(caches.delete(n))});
+  try{ps.push(new Promise(function(r){var q=indexedDB.deleteDatabase("tester-fake");q.onsuccess=q.onerror=q.onblocked=function(){r()}}))}catch(e){}
+  try{if(navigator.storage&&navigator.storage.getDirectory)ps.push(navigator.storage.getDirectory().then(function(d){return d.removeEntry("tester-fake.bin")}).catch(function(){}))}catch(e){}
+  saved=null;Promise.all(ps).then(function(){log("test data cleared");$("#clear").textContent="Cleared ✓";setTimeout(function(){$("#clear").textContent="Clear test data"},2500)});
+};
+})();
+</script>
+</body>
+</html>
