@@ -696,6 +696,20 @@ function openDownloads(v,view){
         j.error==="nocache"?"This browser can't keep files for offline use here.":
         "Couldn't save that file. What's already saved is kept; you can try again.";
       box.appendChild(h("p",{class:"note err",text:msg}));
+      if(j&&j.error&&j.lastError&&j.lastError.url){
+        (function(info){
+          var det=h("details",{style:"margin-top:8px"});
+          det.appendChild(h("summary",{class:"linkbtn",style:"cursor:pointer",text:"Show download details"}));
+          var rows=[
+            "URL: "+info.url,
+            "Stage: "+(info.stage==="cache"?"Saving to device":"Requesting audio"),
+            info.http?"HTTP status: "+info.http:"",
+            info.message?"Browser error: "+info.message:""
+          ].filter(function(x){return x});
+          det.appendChild(h("div",{class:"note small",style:"margin-top:6px;white-space:pre-wrap;overflow-wrap:anywhere"},rows.join("\n")));
+          box.appendChild(det);
+        })(j.lastError);
+      }
     }
     var row=h("div",{class:"dlrow"});
     if(j&&j.running)row.appendChild(h("button",{class:"btn sm",type:"button",onclick:function(){dl.pause(id,k)}},["Pause"]));
