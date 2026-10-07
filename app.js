@@ -665,7 +665,7 @@ function dlIcon(state,f){
 }
 function dlCount(n){return String(n).replace(/\B(?=(\d{3})+(?!\d))/g,",")}
 function openDownloads(v,view){
-  var dl=window.BBReader&&BBReader.dl,id=v.app,tok="dl"+Date.now(),st=null,sel={},open={},mode=view||{k:"main"};
+  var dl=window.BBReader&&BBReader.dl,id=v.app,tok="dl"+Date.now(),st=null,sel={},open={},mode=view||{k:"main"},manual=(id==="kjv"),imp=null;
   function mine(){var b=$("sheetBox");return $("overlay").classList.contains("show")&&b.getAttribute("data-dl")===tok}
   function onJob(){if(!mine()){dl.off(onJob);return}refresh()}
   function refresh(){dl.status(id).then(function(x){st=x;paint()},function(){st=null;paint(true)})}
@@ -712,6 +712,12 @@ function openDownloads(v,view){
       }
     }
     var row=h("div",{class:"dlrow"});
+    if(k==="audio"&&manual){
+      box.appendChild(h("p",{class:"note",text:"This audio can't be downloaded by the app itself. You save it from AudioTreasure's site, then add it here."}));
+      row.appendChild(h("button",{class:"btn sm",type:"button",onclick:function(){mode={k:"import"};imp=null;paint()}},["Add audio from my device…"]));
+      if(d.done>0)row.appendChild(h("button",{class:"btn sm ghost",type:"button",onclick:function(){mode={k:"rm",kind:k};paint()}},["Remove"]));
+      box.appendChild(row);return box;
+    }
     if(j&&j.running)row.appendChild(h("button",{class:"btn sm",type:"button",onclick:function(){dl.pause(id,k)}},["Pause"]));
     else if(j&&!j.finished&&j.i<j.total)row.appendChild(h("button",{class:"btn sm",type:"button",onclick:function(){dl.resume(id,k)}},["Resume"]));
     else if(d.done<d.total)row.appendChild(h("button",{class:"btn sm",type:"button",onclick:function(){startKind(k,null)}},["Download whole Bible"]));
@@ -732,6 +738,49 @@ function openDownloads(v,view){
       b.appendChild(h("div",{style:"display:grid;gap:8px;margin-top:12px"},[
         h("button",{class:"btn",type:"button",onclick:function(){var m=mode;mode={k:"main",warned:true};dl.start(id,m.kind,m.pairs);paint()}},["Start download"]),
         h("button",{class:"btn ghost",type:"button",onclick:function(){mode={k:"main"};paint()}},["Cancel"])]));
+      return;
+    }
+    if(mode.k==="import"){
+      var AT="https://www.audiotreasure.com/content/KJV_AT/zipfiles/";
+      if(imp&&imp.running){
+        b.appendChild(h("p",{class:"muted",text:"Adding audio… keep this screen open."}));
+        b.appendChild(bar(imp.done,imp.total||1));
+        b.appendChild(h("p",{class:"note",text:imp.total?(imp.at?imp.at+" · ":"")+dlCount(imp.done)+" of "+dlCount(imp.total):"Reading the files…"}));
+        return;
+      }
+      if(imp&&imp.res){
+        var r=imp.res,lines=[];
+        if(r.saved)lines.push("Added "+dlCount(r.saved)+" chapter"+(r.saved===1?"":"s")+". They now play offline, at any speed.");
+        else lines.push("Nothing was added.");
+        if(r.skipped)lines.push(dlCount(r.skipped)+" file"+(r.skipped===1?"":"s")+" skipped because the app couldn't tell which chapter "+(r.skipped===1?"it is":"they are")+(r.unmatched.length?": "+r.unmatched.slice(0,4).join(", ")+(r.skipped>4?"…":""):"")+".");
+        if(r.failed)lines.push(dlCount(r.failed)+" couldn't be saved.");
+        if(r.error==="full")lines.push("The device ran out of storage space. What was added is kept.");
+        else if(r.error==="nocache")lines.push("This browser can't keep files for offline use here.");
+        else if(r.error)lines.push(r.error);
+        if(r.saved&&!r.error)lines.push("You can delete the zip from Files now to free up space.");
+        lines.forEach(function(t){b.appendChild(h("p",{class:"muted",text:t}))});
+        b.appendChild(h("div",{style:"display:grid;gap:8px;margin-top:12px"},[
+          h("button",{class:"btn",type:"button",onclick:function(){mode={k:"main"};imp=null;refresh()}},["Done"]),
+          h("button",{class:"btn ghost",type:"button",onclick:function(){imp=null;paint()}},["Add more"])]));
+        return;
+      }
+      b.appendChild(h("p",{class:"muted",text:"AudioTreasure lets you download its King James audio for your own use, but it doesn't allow other apps to download it for you. So it takes two steps:"}));
+      b.appendChild(h("p",{class:"muted",text:"1. Download the audio. A zip is easiest: tap one below and your phone saves it to Files."}));
+      b.appendChild(h("div",{style:"display:grid;gap:8px;margin:6px 0 12px"},[
+        h("a",{class:"btn ghost",href:AT+"KJV_NT_Audio_TB.zip",target:"_blank",rel:"noopener"},["New Testament (265 MB)"]),
+        h("a",{class:"btn ghost",href:AT+"KJV_OT_Audio_TB.zip",target:"_blank",rel:"noopener"},["Old Testament (878 MB)"]),
+        h("a",{class:"btn ghost",href:AT,target:"_blank",rel:"noopener"},["One book at a time…"])]));
+      b.appendChild(h("p",{class:"muted",text:"2. Come back here and add it. Pick the zip, or the MP3 files if your phone already unpacked it. The app works out which chapter each file is."}));
+      var fi=h("input",{type:"file",multiple:"",accept:".zip,.mp3,audio/mpeg,application/zip",style:"display:none"});
+      fi.onchange=function(){
+        var fs=fi.files;if(!fs||!fs.length)return;
+        imp={running:true,done:0,total:0,at:""};paint();
+        dl.importAudio(id,fs,function(n,t,at){imp.done=n;imp.total=t;imp.at=at;if(mine()&&mode.k==="import")paint()}).then(function(r){imp={res:r};if(mine())paint()});
+      };
+      b.appendChild(fi);
+      b.appendChild(h("div",{style:"display:grid;gap:8px"},[
+        h("button",{class:"btn",type:"button",onclick:function(){fi.click()}},["Add audio files…"]),
+        h("button",{class:"btn ghost",type:"button",onclick:function(){mode={k:"main"};paint()}},["Back"])]));
       return;
     }
     if(mode.k==="rm"){
