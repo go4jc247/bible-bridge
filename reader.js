@@ -334,9 +334,16 @@
       if (!r.ok) {
         var e = new Error("HTTP " + r.status);
         e.http = r.status;
+        e.audioUrl = u;
+        e.audioStage = "fetch";
         throw e;
       }
-      return cacheStrict(AUDIO_CACHE, u, r.clone());
+      return cacheStrict(AUDIO_CACHE, u, r.clone()).catch(function (e) {
+        e = e || new Error("Could not save the response");
+        e.audioUrl = u;
+        e.audioStage = "cache";
+        throw e;
+      });
     }).then(function () { audioHave[u] = true; });
   }
   function failText(e) {
@@ -354,6 +361,15 @@
       (j.kind === "text" ? saveText(ix, p[0], p[1]) : saveAudio(t, p[0], p[1])).then(function () {
         j.i++; j.done = j.i; dlEmit(); step();
       }, function (e) {
+        if (j.kind === "audio") {
+          j.lastError = {
+            book: p[0], chapter: p[1],
+            url: e && e.audioUrl ? e.audioUrl : audioUrlFor(t, p[0], p[1]),
+            http: e && e.http ? e.http : 0,
+            stage: e && e.audioStage ? e.audioStage : "fetch",
+            message: e && e.message ? e.message : ""
+          };
+        }
         if (j.kind === "audio" && e && e.http === 404) {
           j.skipped.push([p[0], p[1]]);
           j.i++; j.done = j.i; dlEmit(); step();
