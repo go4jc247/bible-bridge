@@ -336,9 +336,7 @@
         e.http = r.status;
         throw e;
       }
-      return r.blob();
-    }).then(function (bl) {
-      return cacheStrict(AUDIO_CACHE, u, new Response(bl, { status: 200, headers: { "Content-Type": bl.type || "audio/mpeg" } }));
+      return cacheStrict(AUDIO_CACHE, u, r.clone());
     }).then(function () { audioHave[u] = true; });
   }
   function failText(e) {
