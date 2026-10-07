@@ -327,18 +327,30 @@
       });
     });
   }
+  function altUrls(t, b, c) {
+    var u = audioUrlFor(t, b, c), out = [u];
+    if (t && t.audio === "rst" && b === 21) {
+      ["SongofSolomon", "Song_of_Solomon", "Song_of_Songs", "SongOfSolomon", "SongOfSongs", "Song"].forEach(function (nm) {
+        var n = "22_" + nm;
+        out.push(DBS_BASE + "OT_RUSS76/" + n + "/" + n + "_" + pad(c, 3) + ".mp3");
+      });
+    }
+    return out;
+  }
+  function fetchFirst(list, i) {
+    return fetch(list[i], { mode: "cors" }).then(function (r) {
+      if (!r.ok) { var e = new Error("HTTP " + r.status); e.http = r.status; e.audioUrl = list[i]; e.audioStage = "fetch"; throw e; }
+      return r.blob();
+    }).catch(function (e) {
+      if (e && e.http === 404 && i + 1 < list.length) return fetchFirst(list, i + 1);
+      throw e;
+    });
+  }
   function saveAudio(t, b, c) {
     var u = audioUrlFor(t, b, c);
     if (!u || audioHave[u]) return Promise.resolve();
-    return fetch(u, { mode: "cors" }).then(function (r) {
-      if (!r.ok) {
-        var e = new Error("HTTP " + r.status);
-        e.http = r.status;
-        e.audioUrl = u;
-        e.audioStage = "fetch";
-        throw e;
-      }
-      return cacheStrict(AUDIO_CACHE, u, r.clone()).catch(function (e) {
+    return fetchFirst(altUrls(t, b, c), 0).then(function (bl) {
+      return cacheStrict(AUDIO_CACHE, u, new Response(bl, { status: 200, headers: { "Content-Type": bl.type || "audio/mpeg" } })).catch(function (e) {
         e = e || new Error("Could not save the response");
         e.audioUrl = u;
         e.audioStage = "cache";
@@ -412,6 +424,96 @@
     return caches.open(AUDIO_CACHE).then(function (c) {
       return c.keys().then(function (ks) { return Promise.all(ks.filter(function (k) { return k.url.indexOf(base) === 0; }).map(function (k) { delete audioHave[k.url]; return c.delete(k); })); });
     }).then(function () { dlEmit(); });
+  }
+
+  /* ---------- audio you saved yourself: pick the files (or a zip of them) and keep every chapter on this device ---------- */
+  function normName(s) { return String(s).toLowerCase().replace(/[^a-z0-9]/g, ""); }
+  var AUD_ALIAS = { songofsongs: 21, songofsolomon: 21, songofsoloman: 21, psalm: 18, revelations: 65 };
+  function parseAudioName(file) {
+    var base = String(file).split("/").pop().replace(/\.[A-Za-z0-9]+$/, "");
+    var m = /^(?:(\d{1,2})[_\- ])?(.*?)(\d+)?$/.exec(base);
+    if (!m) return null;
+    var num = m[1] ? parseInt(m[1], 10) - 1 : -1, nm2 = normName(m[2]), ch = m[3] ? parseInt(m[3], 10) : 0, b = -1, i;
+    for (i = 0; i < KJV_AUD.length; i++) if (normName(KJV_AUD[i]) === nm2) { b = i; break; }
+    if (b < 0 && AUD_ALIAS[nm2] != null) b = AUD_ALIAS[nm2];
+    if (b < 0 && num >= 0 && num < 66) b = num;
+    if (b < 0) return null;
+    if (NO_NUM[b]) ch = 1;
+    if (!ch) return null;
+    return { b: b, c: ch };
+  }
+  function u16(v, o) { return v.getUint16(o, true); }
+  function u32(v, o) { return v.getUint32(o, true); }
+  function readSlice(f, a, b2) { return f.slice(a, b2).arrayBuffer(); }
+  function zipEntries(f) {
+    var tail = Math.min(f.size, 65557);
+    return readSlice(f, f.size - tail, f.size).then(function (buf) {
+      var v = new DataView(buf), p = -1, i;
+      for (i = buf.byteLength - 22; i >= 0; i--) if (u32(v, i) === 0x06054b50) { p = i; break; }
+      if (p < 0) throw new Error("This doesn't look like a zip file.");
+      var n = u16(v, p + 10), size = u32(v, p + 12), off = u32(v, p + 16);
+      if (n === 0xffff || size === 0xffffffff || off === 0xffffffff) throw new Error("This zip uses a format the app can't read.");
+      return readSlice(f, off, off + size).then(function (cb) {
+        var cv = new DataView(cb), out = [], q = 0, dec = new TextDecoder("utf-8");
+        while (q + 46 <= cb.byteLength && u32(cv, q) === 0x02014b50) {
+          var nl = u16(cv, q + 28), el = u16(cv, q + 30), cl = u16(cv, q + 32);
+          out.push({ name: dec.decode(new Uint8Array(cb, q + 46, nl)), method: u16(cv, q + 10), csize: u32(cv, q + 20), usize: u32(cv, q + 24), off: u32(cv, q + 42) });
+          q += 46 + nl + el + cl;
+        }
+        return out;
+      });
+    });
+  }
+  function zipBlob(f, e) {
+    return readSlice(f, e.off, e.off + 30).then(function (hb) {
+      var hv = new DataView(hb);
+      if (u32(hv, 0) !== 0x04034b50) throw new Error("damaged zip");
+      var start = e.off + 30 + u16(hv, 26) + u16(hv, 28), data = f.slice(start, start + e.csize);
+      if (e.method === 0) return new Blob([data], { type: "audio/mpeg" });
+      if (e.method !== 8) throw new Error("unsupported zip compression");
+      if (typeof DecompressionStream === "undefined") throw new Error("This browser can't open compressed zips. Unpack the zip in Files and pick the MP3 files instead.");
+      return new Response(data.stream().pipeThrough(new DecompressionStream("deflate-raw"))).blob();
+    });
+  }
+  function importAudio(id, files, onProg) {
+    var t = TR[id], res = { saved: 0, skipped: 0, unmatched: [], failed: 0, error: "" };
+    if (!t || !t.audio || t.audio === "rst") return Promise.resolve(res);
+    if (!window.caches) { res.error = "nocache"; return Promise.resolve(res); }
+    files = Array.prototype.slice.call(files || []);
+    return getIndex(id).then(function (ix) {
+      var jobs = [];
+      function addJob(label, bc, get) {
+        if (!bc || !ix.len[bc.b] || bc.c < 1 || bc.c > ix.len[bc.b].length) { res.skipped++; if (res.unmatched.length < 8) res.unmatched.push(label); return; }
+        jobs.push({ label: label, bc: bc, get: get });
+      }
+      return files.reduce(function (p, f) {
+        return p.then(function () {
+          if (/\.zip$/i.test(f.name) || f.type === "application/zip" || f.type === "application/x-zip-compressed") {
+            return zipEntries(f).then(function (es) {
+              es.forEach(function (e) { if (/\.mp3$/i.test(e.name) && !/(^|\/)__MACOSX\//.test(e.name)) addJob(e.name.split("/").pop(), parseAudioName(e.name), function () { return zipBlob(f, e); }); });
+            });
+          }
+          if (/\.(mp3|m4a|aac|wav)$/i.test(f.name) || /^audio\//.test(f.type)) { addJob(f.name, parseAudioName(f.name), function () { return Promise.resolve(f); }); return; }
+          res.skipped++; if (res.unmatched.length < 8) res.unmatched.push(f.name);
+        });
+      }, Promise.resolve()).then(function () {
+        var n = 0;
+        return jobs.reduce(function (p, j) {
+          return p.then(function () {
+            if (onProg) onProg(n, jobs.length, label(j.bc.b, j.bc.c));
+            return j.get().then(function (bl) {
+              if (!bl || bl.size < 2000) throw new Error("empty");
+              var url = audioUrlFor(t, j.bc.b, j.bc.c);
+              return cacheStrict(AUDIO_CACHE, url, new Response(bl, { status: 200, headers: { "Content-Type": bl.type || "audio/mpeg" } })).then(function () { audioHave[url] = true; res.saved++; });
+            }).catch(function (e) {
+              var m = String(e && e.name || "") + String(e && e.message || "");
+              if (/Quota/i.test(m)) { res.error = "full"; throw e; }
+              res.failed++;
+            }).then(function () { n++; if (n % 20 === 0) dlEmit(); });
+          });
+        }, Promise.resolve()).then(function () { if (onProg) onProg(jobs.length, jobs.length, ""); });
+      });
+    }).catch(function (e) { if (!res.error) res.error = (e && e.message) || "error"; }).then(function () { dlEmit(); return res; });
   }
 
   /* ---------- state ---------- */
