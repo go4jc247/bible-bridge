@@ -687,6 +687,9 @@ function openDownloads(v,view){
     box.appendChild(h("div",{class:"dlh"},[h("b",{text:kindName(k)}),h("span",{text:d.done>=d.total?"All "+dlCount(d.total)+" chapters saved":dlCount(d.done)+" of "+dlCount(d.total)+" chapters saved"})]));
     box.appendChild(bar(d.done,d.total));
     if(j&&j.running)box.appendChild(h("p",{class:"note",text:"Saving "+BOOKS[j.at?j.at[0]:0][2]+" "+(j.at?j.at[1]:"")+" \u00b7 "+dlCount(j.i)+" of "+dlCount(j.total)+" this round"}));
+    if(j&&j.finished&&j.skipped&&j.skipped.length){
+      box.appendChild(h("p",{class:"note",text:"Skipped "+j.skipped.length+" chapters the audio host doesn't have: "+j.skipped.map(function(p){return BOOKS[p[0]][2]+" "+p[1]}).join(", ")+"."}));
+    }
     if(j&&j.error){
       var msg=j.error==="full"?"The device ran out of storage space for this. What's already saved is kept.":
         j.error==="offline"?"No connection. What's already saved is kept; tap Resume when you're back online.":
