@@ -331,7 +331,11 @@
     var u = audioUrlFor(t, b, c);
     if (!u || audioHave[u]) return Promise.resolve();
     return fetch(u, { mode: "cors" }).then(function (r) {
-      if (!r.ok) throw new Error("HTTP " + r.status);
+      if (!r.ok) {
+        var e = new Error("HTTP " + r.status);
+        e.http = r.status;
+        throw e;
+      }
       return r.blob();
     }).then(function (bl) {
       return cacheStrict(AUDIO_CACHE, u, new Response(bl, { status: 200, headers: { "Content-Type": bl.type || "audio/mpeg" } }));
@@ -351,7 +355,14 @@
       j.at = p;
       (j.kind === "text" ? saveText(ix, p[0], p[1]) : saveAudio(t, p[0], p[1])).then(function () {
         j.i++; j.done = j.i; dlEmit(); step();
-      }, function (e) { j.running = false; j.error = failText(e); dlEmit(); });
+      }, function (e) {
+        if (j.kind === "audio" && e && e.http === 404) {
+          j.skipped.push([p[0], p[1]]);
+          j.i++; j.done = j.i; dlEmit(); step();
+          return;
+        }
+        j.running = false; j.error = failText(e); dlEmit();
+      });
     })();
   }
   // pairs: [[book, chapter], ...] or null for the whole Bible
@@ -363,7 +374,7 @@
     return getIndex(id).then(function (ix) {
       var list = pairs;
       if (!list) { list = []; for (var b = 0; b < ix.len.length; b++) for (var c = 1; c <= ix.len[b].length; c++) if (ix.len[b][c - 1] > 0) list.push([b, c]); }
-      var j = { id: id, kind: kind, list: list, i: 0, done: 0, total: list.length, paused: false, running: true, error: "", finished: false, at: null };
+      var j = { id: id, kind: kind, list: list, i: 0, done: 0, total: list.length, paused: false, running: true, error: "", finished: false, at: null, skipped: [] };
       dlJobs[key] = j; dlEmit(); runJob(j, ix);
     }, function () { dlJobs[key] = { id: id, kind: kind, list: [], i: 0, done: 0, total: 0, running: false, error: failText() }; dlEmit(); });
   }
@@ -431,7 +442,7 @@
   function audioUrlFor(t, b, c) {
     if (!t || !t.audio) return "";
     if (t.audio === "rst") {
-      var n = pad(b + 1, 2) + "_" + NAMES.en[b].replace(/ /g, "");
+      var n = pad(b + 1, 2) + "_" + (b === 21 ? "SongofSongs" : NAMES.en[b].replace(/ /g, ""));
       return DBS_BASE + (b < 39 ? "OT" : "NT") + "_RUSS76/" + n + "/" + n + "_" + pad(c, 3) + ".mp3";
     }
     return KJV_BASE + pad(b + 1, 2) + "_" + KJV_AUD[b] + (NO_NUM[b] ? "" : pad(c, 3)) + ".mp3";
