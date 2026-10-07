@@ -745,7 +745,7 @@ function openDownloads(v,view){
       if(imp&&imp.running){
         b.appendChild(h("p",{class:"muted",text:"Adding audio… keep this screen open."}));
         b.appendChild(bar(imp.done,imp.total||1));
-        b.appendChild(h("p",{class:"note",text:imp.total?(imp.at?imp.at+" · ":"")+dlCount(imp.done)+" of "+dlCount(imp.total):"Reading the files…"}));
+        b.appendChild(h("p",{class:"note",text:imp.total?(imp.at?imp.at+" · ":"")+dlCount(imp.done)+" of "+dlCount(imp.total):(imp.at||"Reading the files…")}));
         return;
       }
       if(imp&&imp.res){
