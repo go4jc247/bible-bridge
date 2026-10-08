@@ -687,34 +687,18 @@ function openDownloads(v,view){
     box.appendChild(h("div",{class:"dlh"},[h("b",{text:kindName(k)}),h("span",{text:d.done>=d.total?"All "+dlCount(d.total)+" chapters saved":dlCount(d.done)+" of "+dlCount(d.total)+" chapters saved"})]));
     box.appendChild(bar(d.done,d.total));
     if(j&&j.running)box.appendChild(h("p",{class:"note",text:"Saving "+BOOKS[j.at?j.at[0]:0][2]+" "+(j.at?j.at[1]:"")+" \u00b7 "+dlCount(j.i)+" of "+dlCount(j.total)+" this round"}));
-    if(j&&j.finished&&j.skipped&&j.skipped.length){
-      box.appendChild(h("p",{class:"note",text:"Skipped "+j.skipped.length+" chapters the audio host doesn't have: "+j.skipped.map(function(p){return BOOKS[p[0]][2]+" "+p[1]}).join(", ")+"."}));
-    }
+    if(j&&j.finished&&j.skipped&&j.skipped.length)box.appendChild(h("p",{class:"note",text:"Skipped "+j.skipped.length+" chapter"+(j.skipped.length===1?"":"s")+" the audio host doesn't have: "+j.skipped.slice(0,4).map(function(p){return BOOKS[p[0]][2]+" "+p[1]}).join(", ")+"."}));
     if(j&&j.error){
       var msg=j.error==="full"?"The device ran out of storage space for this. What's already saved is kept.":
         j.error==="offline"?"No connection. What's already saved is kept; tap Resume when you're back online.":
         j.error==="nocache"?"This browser can't keep files for offline use here.":
         "Couldn't save that file. What's already saved is kept; you can try again.";
       box.appendChild(h("p",{class:"note err",text:msg}));
-      if(j&&j.error&&j.lastError&&j.lastError.url){
-        (function(info){
-          var det=h("details",{style:"margin-top:8px"});
-          det.appendChild(h("summary",{class:"linkbtn",style:"cursor:pointer",text:"Show download details"}));
-          var rows=[
-            "URL: "+info.url,
-            "Stage: "+(info.stage==="cache"?"Saving to device":"Requesting audio"),
-            info.http?"HTTP status: "+info.http:"",
-            info.message?"Browser error: "+info.message:""
-          ].filter(function(x){return x});
-          det.appendChild(h("div",{class:"note small",style:"margin-top:6px;white-space:pre-wrap;overflow-wrap:anywhere"},rows.join("\n")));
-          box.appendChild(det);
-        })(j.lastError);
-      }
     }
     var row=h("div",{class:"dlrow"});
     if(k==="audio"&&manual){
       box.appendChild(h("p",{class:"note",text:"This audio can't be downloaded by the app itself. You save it from AudioTreasure's site, then add it here."}));
-      row.appendChild(h("button",{class:"btn sm",type:"button",onclick:function(){mode={k:"import"};imp=null;paint()}},["Add audio from my device…"]));
+      row.appendChild(h("button",{class:"btn sm",type:"button",onclick:function(){mode={k:"import"};imp=null;paint()}},["Add audio from my device\u2026"]));
       if(d.done>0)row.appendChild(h("button",{class:"btn sm ghost",type:"button",onclick:function(){mode={k:"rm",kind:k};paint()}},["Remove"]));
       box.appendChild(row);return box;
     }
@@ -743,16 +727,16 @@ function openDownloads(v,view){
     if(mode.k==="import"){
       var AT="https://www.audiotreasure.com/content/KJV_AT/zipfiles/";
       if(imp&&imp.running){
-        b.appendChild(h("p",{class:"muted",text:"Adding audio… keep this screen open."}));
+        b.appendChild(h("p",{class:"muted",text:"Adding audio\u2026 keep this screen open."}));
         b.appendChild(bar(imp.done,imp.total||1));
-        b.appendChild(h("p",{class:"note",text:imp.total?(imp.at?imp.at+" · ":"")+dlCount(imp.done)+" of "+dlCount(imp.total):(imp.at||"Reading the files…")}));
+        b.appendChild(h("p",{class:"note",text:imp.total?(imp.at?imp.at+" \u00b7 ":"")+dlCount(imp.done)+" of "+dlCount(imp.total):(imp.at||"Reading the files\u2026")}));
         return;
       }
       if(imp&&imp.res){
         var r=imp.res,lines=[];
         if(r.saved)lines.push("Added "+dlCount(r.saved)+" chapter"+(r.saved===1?"":"s")+". They now play offline, at any speed.");
         else lines.push("Nothing was added.");
-        if(r.skipped)lines.push(dlCount(r.skipped)+" file"+(r.skipped===1?"":"s")+" skipped because the app couldn't tell which chapter "+(r.skipped===1?"it is":"they are")+(r.unmatched.length?": "+r.unmatched.slice(0,4).join(", ")+(r.skipped>4?"…":""):"")+".");
+        if(r.skipped)lines.push(dlCount(r.skipped)+" file"+(r.skipped===1?"":"s")+" skipped because the app couldn't tell which chapter "+(r.skipped===1?"it is":"they are")+(r.unmatched.length?": "+r.unmatched.slice(0,4).join(", ")+(r.skipped>4?"\u2026":""):"")+".");
         if(r.failed)lines.push(dlCount(r.failed)+" couldn't be saved.");
         if(r.error==="full")lines.push("The device ran out of storage space. What was added is kept.");
         else if(r.error==="nocache")lines.push("This browser can't keep files for offline use here.");
@@ -769,17 +753,19 @@ function openDownloads(v,view){
       b.appendChild(h("div",{style:"display:grid;gap:8px;margin:6px 0 12px"},[
         h("a",{class:"btn ghost",href:AT+"KJV_NT_Audio_TB.zip",target:"_blank",rel:"noopener"},["New Testament (265 MB)"]),
         h("a",{class:"btn ghost",href:AT+"KJV_OT_Audio_TB.zip",target:"_blank",rel:"noopener"},["Old Testament (878 MB)"]),
-        h("a",{class:"btn ghost",href:AT,target:"_blank",rel:"noopener"},["One book at a time…"])]));
+        h("a",{class:"btn ghost",href:AT,target:"_blank",rel:"noopener"},["One book at a time\u2026"])]));
       b.appendChild(h("p",{class:"muted",text:"2. Come back here and add it. Pick the zip, or the MP3 files if your phone already unpacked it. The app works out which chapter each file is."}));
       var fi=h("input",{type:"file",multiple:"",accept:".zip,.mp3,audio/mpeg,application/zip",style:"display:none"});
       fi.onchange=function(){
         var fs=fi.files;if(!fs||!fs.length)return;
         imp={running:true,done:0,total:0,at:""};paint();
-        dl.importAudio(id,fs,function(n,t,at){imp.done=n;imp.total=t;imp.at=at;if(mine()&&mode.k==="import")paint()}).then(function(r){imp={res:r};if(mine())paint()});
+        function fail(e){imp={res:{saved:0,skipped:0,unmatched:[],failed:0,error:"Something went wrong: "+((e&&e.message)||e)+". Close the app completely and reopen it, then try again."}};if(mine())paint()}
+        if(typeof dl.importAudio!=="function"){fail(new Error("this version of the app is missing the audio import"));return}
+        try{dl.importAudio(id,fs,function(n,t,at){imp.done=n;imp.total=t;imp.at=at;if(mine()&&mode.k==="import")paint()}).then(function(r){imp={res:r};if(mine())paint()},fail)}catch(e){fail(e)}
       };
       b.appendChild(fi);
       b.appendChild(h("div",{style:"display:grid;gap:8px"},[
-        h("button",{class:"btn",type:"button",onclick:function(){fi.click()}},["Add audio files…"]),
+        h("button",{class:"btn",type:"button",onclick:function(){fi.click()}},["Add audio files\u2026"]),
         h("button",{class:"btn ghost",type:"button",onclick:function(){mode={k:"main"};paint()}},["Back"])]));
       return;
     }

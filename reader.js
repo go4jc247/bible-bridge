@@ -327,6 +327,7 @@
       });
     });
   }
+  // other file names the Russian host might use for a book (the app's first guess is tried first)
   function altUrls(t, b, c) {
     var u = audioUrlFor(t, b, c), out = [u];
     if (t && t.audio === "rst" && b === 21) {
@@ -339,7 +340,7 @@
   }
   function fetchFirst(list, i) {
     return fetch(list[i], { mode: "cors" }).then(function (r) {
-      if (!r.ok) { var e = new Error("HTTP " + r.status); e.http = r.status; e.audioUrl = list[i]; e.audioStage = "fetch"; throw e; }
+      if (!r.ok) { var e = new Error("HTTP " + r.status); e.http = r.status; throw e; }
       return r.blob();
     }).catch(function (e) {
       if (e && e.http === 404 && i + 1 < list.length) return fetchFirst(list, i + 1);
@@ -350,12 +351,7 @@
     var u = audioUrlFor(t, b, c);
     if (!u || audioHave[u]) return Promise.resolve();
     return fetchFirst(altUrls(t, b, c), 0).then(function (bl) {
-      return cacheStrict(AUDIO_CACHE, u, new Response(bl, { status: 200, headers: { "Content-Type": bl.type || "audio/mpeg" } })).catch(function (e) {
-        e = e || new Error("Could not save the response");
-        e.audioUrl = u;
-        e.audioStage = "cache";
-        throw e;
-      });
+      return cacheStrict(AUDIO_CACHE, u, new Response(bl, { status: 200, headers: { "Content-Type": bl.type || "audio/mpeg" } }));
     }).then(function () { audioHave[u] = true; });
   }
   function failText(e) {
@@ -373,20 +369,8 @@
       (j.kind === "text" ? saveText(ix, p[0], p[1]) : saveAudio(t, p[0], p[1])).then(function () {
         j.i++; j.done = j.i; dlEmit(); step();
       }, function (e) {
-        if (j.kind === "audio") {
-          j.lastError = {
-            book: p[0], chapter: p[1],
-            url: e && e.audioUrl ? e.audioUrl : audioUrlFor(t, p[0], p[1]),
-            http: e && e.http ? e.http : 0,
-            stage: e && e.audioStage ? e.audioStage : "fetch",
-            message: e && e.message ? e.message : ""
-          };
-        }
-        if (j.kind === "audio" && e && e.http === 404) {
-          j.skipped.push([p[0], p[1]]);
-          j.i++; j.done = j.i; dlEmit(); step();
-          return;
-        }
+        // a chapter the host simply doesn't have: skip it, keep going with the rest
+        if (e && e.http === 404) { (j.skipped = j.skipped || []).push(p); j.i++; j.done = j.i; dlEmit(); step(); return; }
         j.running = false; j.error = failText(e); dlEmit();
       });
     })();
@@ -400,7 +384,7 @@
     return getIndex(id).then(function (ix) {
       var list = pairs;
       if (!list) { list = []; for (var b = 0; b < ix.len.length; b++) for (var c = 1; c <= ix.len[b].length; c++) if (ix.len[b][c - 1] > 0) list.push([b, c]); }
-      var j = { id: id, kind: kind, list: list, i: 0, done: 0, total: list.length, paused: false, running: true, error: "", finished: false, at: null, skipped: [] };
+      var j = { id: id, kind: kind, list: list, i: 0, done: 0, total: list.length, paused: false, running: true, error: "", finished: false, at: null };
       dlJobs[key] = j; dlEmit(); runJob(j, ix);
     }, function () { dlJobs[key] = { id: id, kind: kind, list: [], i: 0, done: 0, total: 0, running: false, error: failText() }; dlEmit(); });
   }
@@ -429,6 +413,7 @@
   /* ---------- audio you saved yourself: pick the files (or a zip of them) and keep every chapter on this device ---------- */
   function normName(s) { return String(s).toLowerCase().replace(/[^a-z0-9]/g, ""); }
   var AUD_ALIAS = { songofsongs: 21, songofsolomon: 21, songofsoloman: 21, psalm: 18, revelations: 65 };
+  // "43_John001.mp3", "John001.mp3", "62_1John001.mp3" ... -> { b, c } or null
   function parseAudioName(file) {
     var base = String(file).split("/").pop().replace(/\.[A-Za-z0-9]+$/, "");
     var m = /^(?:(\d{1,2})[_\- ])?(.*?)(\d+)?$/.exec(base);
@@ -442,11 +427,22 @@
     if (!ch) return null;
     return { b: b, c: ch };
   }
+  var CH_COUNT = [50,40,27,36,34,24,21,4,31,24,22,25,29,36,10,13,10,42,150,31,12,8,66,52,5,48,12,14,3,9,1,4,7,3,3,3,2,14,4,
+    28,16,24,21,28,16,16,13,6,6,4,4,5,3,6,4,3,1,13,5,5,3,5,1,1,1,22];
+  function stuck(p, ms, what) {
+    return new Promise(function (res, rej) {
+      var t = setTimeout(function () { rej(new Error("Stopped at: " + what + ". Close this screen and try again, or pick the MP3 files instead of the zip.")); }, ms);
+      p.then(function (v) { clearTimeout(t); res(v); }, function (e) { clearTimeout(t); rej(e); });
+    });
+  }
   function u16(v, o) { return v.getUint16(o, true); }
   function u32(v, o) { return v.getUint32(o, true); }
-  function readSlice(f, a, b2) { return f.slice(a, b2).arrayBuffer(); }
-  var CH_COUNT = [50,40,27,36,34,24,21,4,31,24,22,25,29,36,10,13,10,42,150,31,12,8,66,52,5,48,12,14,3,9,1,4,7,3,3,3,2,14,4,28,16,24,21,28,16,16,13,6,6,4,4,5,3,6,4,3,1,13,5,5,3,5,1,1,1,22];
-  function stuck(p, ms, what) { return new Promise(function(res,rej){ var t=setTimeout(function(){rej(new Error("Stopped at: "+what+". Close this screen and try again, or pick the MP3 files instead of the zip."));},ms); p.then(function(v){clearTimeout(t);res(v);},function(e){clearTimeout(t);rej(e);}); }); }
+  function readSlice(f, a, b2) {
+    var sl = f.slice(a, b2);
+    if (sl.arrayBuffer) return sl.arrayBuffer();
+    return new Promise(function (res, rej) { var fr = new FileReader(); fr.onload = function () { res(fr.result); }; fr.onerror = function () { rej(fr.error); }; fr.readAsArrayBuffer(sl); });
+  }
+  // list the files inside a zip without loading the whole zip into memory
   function zipEntries(f) {
     var tail = Math.min(f.size, 65557);
     return readSlice(f, f.size - tail, f.size).then(function (buf) {
@@ -459,7 +455,10 @@
         var cv = new DataView(cb), out = [], q = 0, dec = new TextDecoder("utf-8");
         while (q + 46 <= cb.byteLength && u32(cv, q) === 0x02014b50) {
           var nl = u16(cv, q + 28), el = u16(cv, q + 30), cl = u16(cv, q + 32);
-          out.push({ name: dec.decode(new Uint8Array(cb, q + 46, nl)), method: u16(cv, q + 10), csize: u32(cv, q + 20), usize: u32(cv, q + 24), off: u32(cv, q + 42) });
+          out.push({
+            name: dec.decode(new Uint8Array(cb, q + 46, nl)), method: u16(cv, q + 10),
+            csize: u32(cv, q + 20), usize: u32(cv, q + 24), off: u32(cv, q + 42)
+          });
           q += 46 + nl + el + cl;
         }
         return out;
@@ -478,35 +477,46 @@
     });
   }
   function importAudio(id, files, onProg) {
-    var t=TR[id],res={saved:0,skipped:0,unmatched:[],failed:0,error:""};
-    if(!t||!t.audio||t.audio==="rst")return Promise.resolve(res);
-    if(!window.caches){res.error="nocache";return Promise.resolve(res);}
-    files=Array.prototype.slice.call(files||[]);
-    var ix={len:CH_COUNT.map(function(n){return new Array(n);})};
-    return Promise.resolve().then(function(){
-      var jobs=[];
-      function addJob(label,bc,get){if(!bc||!ix.len[bc.b]||bc.c<1||bc.c>ix.len[bc.b].length){res.skipped++;if(res.unmatched.length<8)res.unmatched.push(label);return;}jobs.push({label:label,bc:bc,get:get});}
-      return files.reduce(function(p,f){return p.then(function(){
-        if(/\.zip$/i.test(f.name)||f.type==="application/zip"||f.type==="application/x-zip-compressed"){
-          if(onProg)onProg(0,0,"Opening "+f.name);
-          return stuck(zipEntries(f),30000,"reading the zip's file list").then(function(es){
-            es.forEach(function(e){if(/\.mp3$/i.test(e.name)&&!/(^|\/)__MACOSX\//.test(e.name))addJob(e.name.split("/").pop(),parseAudioName(e.name),function(){return zipBlob(f,e);});});
+    var t = TR[id], res = { saved: 0, skipped: 0, unmatched: [], failed: 0, error: "" };
+    if (!t || !t.audio || t.audio === "rst") return Promise.resolve(res);
+    if (!window.caches) { res.error = "nocache"; return Promise.resolve(res); }
+    files = Array.prototype.slice.call(files || []);
+    var ix = { len: CH_COUNT.map(function (n) { return new Array(n); }) };
+    return Promise.resolve().then(function () {
+      var jobs = [];
+      function addJob(label, bc, get) {
+        if (!bc || !ix.len[bc.b] || bc.c < 1 || bc.c > ix.len[bc.b].length) { res.skipped++; if (res.unmatched.length < 8) res.unmatched.push(label); return; }
+        jobs.push({ label: label, bc: bc, get: get });
+      }
+      return files.reduce(function (p, f) {
+        return p.then(function () {
+          if (/\.zip$/i.test(f.name) || f.type === "application/zip" || f.type === "application/x-zip-compressed") {
+            if (onProg) onProg(0, 0, "Opening " + f.name);
+            return stuck(zipEntries(f), 30000, "reading the zip's file list").then(function (es) {
+              es.forEach(function (e) { if (/\.mp3$/i.test(e.name) && !/(^|\/)__MACOSX\//.test(e.name)) addJob(e.name.split("/").pop(), parseAudioName(e.name), function () { return zipBlob(f, e); }); });
+            });
+          }
+          if (/\.(mp3|m4a|aac|wav)$/i.test(f.name) || /^audio\//.test(f.type)) { addJob(f.name, parseAudioName(f.name), function () { return Promise.resolve(f); }); return; }
+          res.skipped++; if (res.unmatched.length < 8) res.unmatched.push(f.name);
+        });
+      }, Promise.resolve()).then(function () {
+        var n = 0;
+        return jobs.reduce(function (p, j) {
+          return p.then(function () {
+            if (onProg) onProg(n, jobs.length, label(j.bc.b, j.bc.c));
+            return stuck(j.get(), 60000, "unpacking " + j.label).then(function (bl) {
+              if (!bl || bl.size < 2000) throw new Error("empty");
+              var url = audioUrlFor(t, j.bc.b, j.bc.c);
+              return cacheStrict(AUDIO_CACHE, url, new Response(bl, { status: 200, headers: { "Content-Type": bl.type || "audio/mpeg" } })).then(function () { audioHave[url] = true; res.saved++; });
+            }).catch(function (e) {
+              var m = String(e && e.name || "") + String(e && e.message || "");
+              if (/Quota/i.test(m)) { res.error = "full"; throw e; }
+              res.failed++;
+            }).then(function () { n++; if (n % 20 === 0) dlEmit(); });
           });
-        }
-        if(/\.(mp3|m4a|aac|wav)$/i.test(f.name)||/^audio\//.test(f.type)){addJob(f.name,parseAudioName(f.name),function(){return Promise.resolve(f);});return;}
-        res.skipped++;if(res.unmatched.length<8)res.unmatched.push(f.name);
-      });},Promise.resolve()).then(function(){
-        var n=0;
-        return jobs.reduce(function(p,j){return p.then(function(){
-          if(onProg)onProg(n,jobs.length,label(j.bc.b,j.bc.c));
-          return stuck(j.get(),60000,"unpacking "+j.label).then(function(bl){
-            if(!bl||bl.size<2000)throw new Error("empty");
-            var url=audioUrlFor(t,j.bc.b,j.bc.c);
-            return cacheStrict(AUDIO_CACHE,url,new Response(bl,{status:200,headers:{"Content-Type":bl.type||"audio/mpeg"}})).then(function(){audioHave[url]=true;res.saved++;});
-          }).catch(function(e){var m=String(e&&e.name||"")+String(e&&e.message||"");if(/Quota/i.test(m)){res.error="full";throw e;}res.failed++;}).then(function(){n++;if(n%20===0)dlEmit();});
-        });},Promise.resolve()).then(function(){if(onProg)onProg(jobs.length,jobs.length,"");});
+        }, Promise.resolve()).then(function () { if (onProg) onProg(jobs.length, jobs.length, ""); });
       });
-    }).catch(function(e){if(!res.error)res.error=(e&&e.message)||"error";}).then(function(){dlEmit();return res;});
+    }).catch(function (e) { if (!res.error) res.error = (e && e.message) || "error"; }).then(function () { dlEmit(); return res; });
   }
 
   /* ---------- state ---------- */
@@ -551,7 +561,7 @@
   function audioUrlFor(t, b, c) {
     if (!t || !t.audio) return "";
     if (t.audio === "rst") {
-      var n = pad(b + 1, 2) + "_" + (b === 21 ? "SongofSongs" : NAMES.en[b].replace(/ /g, ""));
+      var n = pad(b + 1, 2) + "_" + (b === 21 ? "SongofSongs" : NAMES.en[b].replace(/ /g, ""));   // the Russian host calls it Song of Songs
       return DBS_BASE + (b < 39 ? "OT" : "NT") + "_RUSS76/" + n + "/" + n + "_" + pad(c, 3) + ".mp3";
     }
     return KJV_BASE + pad(b + 1, 2) + "_" + KJV_AUD[b] + (NO_NUM[b] ? "" : pad(c, 3)) + ".mp3";
@@ -1467,7 +1477,7 @@
 
   window.BBReader = {
     dl: {
-      quick: dlQuick, status: dlStatus, start: dlStart, pause: dlPause, resume: dlResume, remove: dlRemove,
+      importAudio: importAudio, parseAudioName: parseAudioName, quick: dlQuick, status: dlStatus, start: dlStart, pause: dlPause, resume: dlResume, remove: dlRemove,
       job: function (id, kind) { return dlJobs[id + "|" + kind] || null; },
       on: function (fn) { dlSubs.push(fn); }, off: function (fn) { var i = dlSubs.indexOf(fn); if (i >= 0) dlSubs.splice(i, 1); },
       supported: function () { return !!window.caches; }
