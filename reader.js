@@ -147,7 +147,8 @@
 
   function cacheGet(key) {
     try {
-      if (!window.caches) return Promise.resolve(null);      return caches.open(CACHE_NAME).then(function (c) { return c.match(new Request(new URL(key, location.href).href)); })
+      if (!window.caches) return Promise.resolve(null);
+      return caches.open(CACHE_NAME).then(function (c) { return c.match(new Request(new URL(key, location.href).href)); })
         .then(function (r) { return r ? r.arrayBuffer() : null; }).catch(function () { return null; });
     } catch (e) { return Promise.resolve(null); }
   }
@@ -296,7 +297,8 @@
   function dlStatus(id) {
     var t = TR[id];
     return getIndex(id).then(function (ix) {
-      return Promise.all([haveText(id), t.audio ? haveAudio(t) : Promise.resolve(null)]).then(function (r) {        function build(isHave) {
+      return Promise.all([haveText(id), t.audio ? haveAudio(t) : Promise.resolve(null)]).then(function (r) {
+        function build(isHave) {
           var books = [], done = 0, total = 0;
           for (var b = 0; b < ix.len.length; b++) {
             var chs = [], d = 0;
@@ -445,7 +447,8 @@
     var tail = Math.min(f.size, 65557);
     return readSlice(f, f.size - tail, f.size).then(function (buf) {
       var v = new DataView(buf), p = -1, i;
-      for (i = buf.byteLength - 22; i >= 0; i--) if (u32(v, i) === 0x06054b50) { p = i; break; }      if (p < 0) throw new Error("This doesn't look like a zip file.");
+      for (i = buf.byteLength - 22; i >= 0; i--) if (u32(v, i) === 0x06054b50) { p = i; break; }
+      if (p < 0) throw new Error("This doesn't look like a zip file.");
       var n = u16(v, p + 10), size = u32(v, p + 12), off = u32(v, p + 16);
       if (n === 0xffff || size === 0xffffffff || off === 0xffffffff) throw new Error("This zip uses a format the app can't read.");
       return readSlice(f, off, off + size).then(function (cb) {
@@ -594,7 +597,8 @@
     if (playing) s.audio = { b: playing.b, c: playing.c, t: audioT, d: isFinite(A.duration) && A.duration > 0 ? A.duration : audioD, rw: rewound };
     store(STATE_KEY, JSON.stringify(s));
     lastSave = Date.now();
-  }  function persistSoon() { if (Date.now() - lastSave > 4000) persist(); }
+  }
+  function persistSoon() { if (Date.now() - lastSave > 4000) persist(); }
   function savedSpot() {
     var s = loadState();
     if (!s || !s.read || !(s.read.b >= 0 && s.read.b < 66) || !(s.read.c >= 1)) return null;
@@ -743,7 +747,8 @@
     box.textContent = "";
     box.appendChild(el("div", "rd-boot", T().loading));
     rendered = []; endShown = false; viewing = null; appendP = null;
-    view = "loading";    refreshPlayerVisibility();
+    view = "loading";
+    refreshPlayerVisibility();
     setTitle(label(b, c));
     return need(b, c, t).then(function () {
       if (seq !== openSeq || tr !== t) return;
@@ -892,7 +897,8 @@
   }
   function stopAudio() {
     A.pause();
-    if (playing) { try { A.removeAttribute("src"); A.load(); } catch (e) {} }    playing = null; pendingSeek = null; pendingFrac = null; audioT = 0; audioD = 0; rewound = false; preloadedFor = "";
+    if (playing) { try { A.removeAttribute("src"); A.load(); } catch (e) {} }
+    playing = null; pendingSeek = null; pendingFrac = null; audioT = 0; audioD = 0; rewound = false; preloadedFor = "";
     setMsg("");
     updatePP();
   }
@@ -1041,7 +1047,8 @@
     setSrc(A, ch.b, ch.c, function () { A.defaultPlaybackRate = rate; A.playbackRate = rate; });
     $("#rd-ptxt").textContent = label(ch.b, ch.c);
     $("#rd-tcur").textContent = t != null ? fmt(t) : "0:00";
-    $("#rd-tdur").textContent = d ? fmt(d) : "0:00";    refreshPlayerVisibility(); markPlaying(); updateMediaSession(); updateChip(); persist();
+    $("#rd-tdur").textContent = d ? fmt(d) : "0:00";
+    refreshPlayerVisibility(); markPlaying(); updateMediaSession(); updateChip(); persist();
   }
 
   function showRate() { $("#rd-spd").textContent = (rate === 1 ? "1" : String(rate)) + "×"; }
@@ -1190,7 +1197,8 @@
   function kick() {
     if (!engineOn()) { updateChip(); return; }
     updateChip();
-    if (!raf) { lastTs = performance.now(); fpos = null; raf = requestAnimationFrame(frame); }  }
+    if (!raf) { lastTs = performance.now(); fpos = null; raf = requestAnimationFrame(frame); }
+  }
   function hold() {
     if (!isOpen || !followOn || held || !playing) return;
     if (performance.now() < sysUntil) return;
@@ -1339,7 +1347,8 @@
       if (tr !== t || !isOpen) return;
       D = Ds[t.id];
       if (c > D[b].length) c = D[b].length;
-      if (st && st.tr === t.id && st.read && st.read.b === b && st.read.c === c) resumeOff = { b: b, c: c, off: st.read.off || 0 };      setHash({ b: b, c: c });
+      if (st && st.tr === t.id && st.read && st.read.b === b && st.read.c === c) resumeOff = { b: b, c: c, off: st.read.off || 0 };
+      setHash({ b: b, c: c });
       if (!o.play && st && st.tr === t.id && st.audio) restoreAudio(st.audio);
       openReader(b, c);
     }, function () {
