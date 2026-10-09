@@ -663,12 +663,54 @@ function dlIcon(state,f){
     '<path d="M12 7v8m-3.5-3.2L12 15.3l3.5-3.5" stroke="'+col+'" stroke-width="2"/>';
   return h("span",{class:"dli "+state,html:'<svg viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+ring+mark+'</svg>'});
 }
+/* Saved record of what is downloaded, so the version list shows the right icons instantly.
+   A quiet background scan re-checks real storage and corrects the record if anything changed. */
+var DLREC_KEY="bb_dlrec",dlBtns={},dlScanning=false,dlScanAt=0;
+function dlRecGet(){try{return JSON.parse(localStorage.getItem(DLREC_KEY)||"{}")||{}}catch(e){return{}}}
+function dlRecSet(id,q){
+  try{var r=dlRecGet(),o=r[id]||{};
+    q={text:q.text,audio:q.audio==null?o.audio:q.audio,total:q.total||o.total||1189};
+    if(o.text===q.text&&o.total===q.total&&o.audio===q.audio)return false;
+    r[id]=q;localStorage.setItem(DLREC_KEY,JSON.stringify(r));
+  }catch(e){}
+  dlBtnsPaint(id);return true;
+}
+function dlBtnPaint(btn,q){
+  if(!btn||!q)return;
+  var st=q.text>=q.total?"full":q.text>0?"part":"none";
+  if(btn._st===st+":"+q.text)return;btn._st=st+":"+q.text;
+  btn.innerHTML="";btn.appendChild(dlIcon(st,q.text/q.total));
+}
+function dlBtnsPaint(id){
+  var q=dlRecGet()[id],a=dlBtns[id]||[];if(!q)return;
+  dlBtns[id]=a.filter(function(b){return b.isConnected});
+  dlBtns[id].forEach(function(b){dlBtnPaint(b,q)});
+}
+function dlAudioBusy(){
+  try{var a=document.getElementsByTagName("audio");for(var i=0;i<a.length;i++)if(!a[i].paused&&!a[i].ended)return true}catch(e){}
+  return false;
+}
+function dlScanAll(force){
+  var dl=window.BBReader&&BBReader.dl;
+  if(!dl||dlScanning||(!force&&Date.now()-dlScanAt<60000))return;
+  var ids=[];VERSIONS.forEach(function(v){if(v.app&&ids.indexOf(v.app)<0)ids.push(v.app)});
+  dlScanning=true;
+  (function next(i){
+    if(i>=ids.length){dlScanning=false;dlScanAt=Date.now();return}
+    if(dlAudioBusy()){setTimeout(function(){next(i)},8000);return}
+    dl.quick(ids[i]).then(function(q){dlRecSet(ids[i],q)},function(){}).then(function(){setTimeout(function(){next(i+1)},150)});
+  })(0);
+}
+function dlScanSoon(ms){setTimeout(function(){
+  var go=function(){dlScanAll(false)};
+  if(window.requestIdleCallback)requestIdleCallback(go,{timeout:5000});else go();
+},ms)}
 function dlCount(n){return String(n).replace(/\B(?=(\d{3})+(?!\d))/g,",")}
 function openDownloads(v,view){
   var dl=window.BBReader&&BBReader.dl,id=v.app,tok="dl"+Date.now(),st=null,sel={},open={},mode=view||{k:"main"},manual=(id==="kjv"),imp=null;
   function mine(){var b=$("sheetBox");return $("overlay").classList.contains("show")&&b.getAttribute("data-dl")===tok}
   function onJob(){if(!mine()){dl.off(onJob);return}refresh()}
-  function refresh(){dl.status(id).then(function(x){st=x;paint()},function(){st=null;paint(true)})}
+  function refresh(){dl.status(id).then(function(x){st=x;try{dlRecSet(id,{text:x.text.done})}catch(e){}paint()},function(){st=null;paint(true)})}
   function kindName(k){return k==="text"?"Text":"Audio"}
   function startKind(k,pairs){
     if(k==="audio"&&!(mode.warned)){mode={k:"warn",kind:k,pairs:pairs};paint();return}
@@ -826,9 +868,10 @@ function openVersions(){
       if(v.app&&window.BBReader&&BBReader.dl){
         var btn=h("button",{class:"dlbtn",type:"button","aria-label":"Downloads for "+vName(v),onclick:function(){openDownloads(v)}},[dlIcon("none",0)]);
         wrap.appendChild(btn);
-        BBReader.dl.quick(v.app).then(function(q){
-          var f=q.text/q.total;btn.innerHTML="";btn.appendChild(dlIcon(q.text>=q.total?"full":q.text>0?"part":"none",f));
-        }).catch(function(){});
+        (dlBtns[v.app]=dlBtns[v.app]||[]).push(btn);
+        var rec=dlRecGet()[v.app];
+        if(rec)dlBtnPaint(btn,rec);
+        else BBReader.dl.quick(v.app).then(function(q){dlRecSet(v.app,q);dlBtnPaint(btn,q)}).catch(function(){});
       }else{
         var nb=h("button",{class:"dlbtn off",type:"button","aria-disabled":"true","aria-label":"Not available for download"},[dlIcon("off",0)]);
         nb.onclick=function(e){
@@ -845,6 +888,7 @@ function openVersions(){
       }
       box.appendChild(wrap);
     });
+    dlScanSoon(800);
   });
 }
 function confirmSheet(title,msg,okLabel,danger,onOk){
@@ -954,394 +998,3 @@ function openBuilderFor(mode,src){
     groups:src?src.groups.map(function(g){return g.slice()}):[[]],order:src&&src.order||"bible"};
   bstep=1;berr="";renderBuilder();
 }
-function renderBuilder(){
-  var wrap=h("div",{class:"sinner"});
-  var ttl=draft.mode==="new"?"New plan":draft.mode==="clone"?"Your copy":"Edit plan";
-  wrap.appendChild(screenHeader(ttl,function(){if(bstep>1){bstep--;berr="";renderBuilder()}else hideScreen()},_("Step ")+bstep+" of 3"));
-  var body=h("div",{class:"sbody"});
-  if(bstep===1)builderStep1(body);else if(bstep===2)builderStep2(body);else builderStep3(body);
-  if(berr)body.appendChild(h("div",{class:"err",role:"alert",text:berr}));
-  wrap.appendChild(body);
-  var foot=h("div",{class:"sfoot"});
-  foot.appendChild(h("button",{class:"btn ghost",type:"button",onclick:function(){if(bstep>1){bstep--;berr="";renderBuilder()}else hideScreen()}},[bstep>1?"Back":"Cancel"]));
-  if(bstep<3)foot.appendChild(h("button",{class:"btn",type:"button",onclick:builderNext},["Next"]));
-  else if(draft.mode==="new"||draft.mode==="clone"){
-    var st="padding:0 8px;font-size:14px;line-height:1.15";
-    foot.appendChild(h("button",{class:"btn alt",type:"button",style:st,onclick:function(){builderFinish("later")}},["Save for later"]));
-    foot.appendChild(h("button",{class:"btn",type:"button",style:st,onclick:function(){builderFinish("active")}},["Make active"]));
-  }else foot.appendChild(h("button",{class:"btn",type:"button",onclick:function(){builderFinish("save")}},["Save changes"]));
-  wrap.appendChild(foot);
-  var keep=$("screen").scrollTop;showScreen(wrap);$("screen").scrollTop=keep;
-}
-function builderStep1(body){
-  body.appendChild(h("h1",{class:"pg",text:"Name and timeframe"}));
-  if(draft.mode==="clone")body.appendChild(h("p",{class:"note",text:"This is your own copy of \u201c"+draft.presetName+"\u201d. Give it a new name and change anything you like. The ready-made original stays as it is."}));
-  var nm=h("input",{type:"text",placeholder:"My reading plan",value:draft.name,maxlength:"60","aria-label":"Plan name",oninput:function(){draft.name=this.value}});
-  body.appendChild(h("div",{class:"field"},[h("label",{text:"Plan name"}),nm]));
-  if(draft.mode!=="edit-custom"){
-    var st=h("input",{type:"date",value:draft.start,"aria-label":"Start date",onchange:function(){draft.start=this.value;renderBuilder()}});
-    body.appendChild(h("div",{class:"field"},[h("label",{text:"Start date"}),st]));
-    if(draft.mode==="new"||draft.mode==="clone")body.appendChild(h("p",{class:"muted small",style:"margin:-4px 2px 10px",text:"Used if you make the plan active."}));
-  }
-  var chips=h("div",{class:"chiprow"});
-  [[7,"1 week"],[14,"2 weeks"],[30,"30 days"],[60,"60 days"],[90,"90 days"],[180,"6 months"],[365,"1 year"]].forEach(function(o){
-    chips.appendChild(h("button",{class:"chipb",type:"button","aria-pressed":!draft.custom&&draft.days===o[0],onclick:function(){draft.days=o[0];draft.custom=false;renderBuilder()}},[o[1]]));
-  });
-  chips.appendChild(h("button",{class:"chipb",type:"button","aria-pressed":draft.custom,onclick:function(){draft.custom=true;renderBuilder()}},["Custom"]));
-  body.appendChild(h("div",{class:"field"},[h("label",{text:"How long?"}),chips]));
-  if(draft.custom){
-    body.appendChild(h("div",{class:"field"},[h("label",{text:"Number of days"}),h("input",{type:"number",min:"1",max:"1000",inputmode:"numeric",value:String(draft.days),"aria-label":"Number of days",oninput:function(){draft.days=parseInt(this.value,10)||0;var e=$("endline");if(e)e.textContent=endText()}})]));
-  }
-  if(draft.mode!=="edit-custom")body.appendChild(h("p",{class:"muted",id:"endline",text:endText()}));
-}
-function endText(){return draft.days>0&&draft.start?_("Ends ")+niceY(addDays(draft.start,draft.days-1))+".":"Enter the number of days."}
-function builderStep2(body){
-  body.appendChild(h("h1",{class:"pg",text:"Pick your groups"}));
-  body.appendChild(h("p",{class:"muted",style:"margin:0 2px 6px",text:"Each day you\u2019ll read a little from every group. Each group is spread across the whole timeframe so they all finish together."}));
-  body.appendChild(h("p",{class:"muted small",style:"margin:0 2px 12px",text:"Portions are whole chapters. Proverbs is split into short sections of about 10 to 15 verses."}));
-  var used={};
-  draft.groups.forEach(function(g,gi){
-    var col=GCOLORS[gi%GCOLORS.length];
-    var chips=h("div",{class:"bchips"});
-    g.forEach(function(b){chips.appendChild(h("span",{class:"bch"},[BOOKS[b][2],h("button",{type:"button","aria-label":_("Remove ")+BOOKS[b][2],onclick:function(){draft.groups[gi]=draft.groups[gi].filter(function(x){return x!==b});berr="";renderBuilder()}},[ic("x")])]))});
-    var head=h("div",{class:"gh"},[h("b",{text:_("Group ")+(gi+1)}),h("span",{class:"muted small",text:g.length?totalChapters(g)+_(" chapters"):"No books yet"})]);
-    if(draft.groups.length>1)head.appendChild(h("button",{class:"xbtn",type:"button","aria-label":_("Remove group ")+(gi+1),onclick:function(){draft.groups.splice(gi,1);berr="";renderBuilder()}},[ic("trash")]));
-    body.appendChild(h("div",{class:"gcard",style:"border-left-color:"+col},[head,chips,h("button",{class:"btn alt sm",type:"button",onclick:function(){openPicker(gi)}},[ic("plus"),g.length?"Edit books":"Add books"])]));
-  });
-  if(draft.groups.length<5)body.appendChild(h("button",{class:"newplan",type:"button",onclick:function(){draft.groups.push([]);berr="";renderBuilder()}},[ic("plus"),_("Add group (")+draft.groups.length+" of 5)"]));
-  body.appendChild(h("h2",{class:"sec",text:"Reading order inside a group"}));
-  body.appendChild(h("div",{class:"seg",role:"group","aria-label":"Reading order"},[
-    h("button",{type:"button","aria-pressed":draft.order==="bible",onclick:function(){draft.order="bible";renderBuilder()}},["Bible order"]),
-    h("button",{type:"button","aria-pressed":draft.order==="picked",onclick:function(){draft.order="picked";renderBuilder()}},["Order I picked"])]));
-}
-function openPicker(gi){
-  var tmp=draft.groups[gi].slice(),other={};
-  draft.groups.forEach(function(g,i){if(i!==gi)g.forEach(function(b){other[b]=true})});
-  openSheet(function(box){
-    function draw(){
-      box.innerHTML="";
-      box.appendChild(sheetHead(_("Group ")+(gi+1)+_(" books")));
-      box.appendChild(h("div",{class:"lbl",text:"Quick picks"}));
-      var q=h("div",{class:"chiprow"});
-      QUICK.forEach(function(o){
-        var set=rng(o[1],o[2]).filter(function(b){return !other[b]});
-        var all=set.length>0&&set.every(function(b){return tmp.indexOf(b)>=0});
-        q.appendChild(h("button",{class:"chipb",type:"button","aria-pressed":all,disabled:set.length?null:"",onclick:function(){
-          if(all)tmp=tmp.filter(function(b){return set.indexOf(b)<0});else set.forEach(function(b){if(tmp.indexOf(b)<0)tmp.push(b)});draw()}},[o[0]]));
-      });
-      box.appendChild(q);
-      box.appendChild(h("div",{class:"lbl",style:"margin-top:16px",text:"Or choose books"}));
-      var g=h("div",{class:"pick"});
-      BOOKS.forEach(function(b,i){
-        var on=tmp.indexOf(i)>=0;
-        g.appendChild(h("button",{type:"button","aria-pressed":on,disabled:other[i]?"":null,title:other[i]?"Already in another group":"",onclick:function(){if(on)tmp=tmp.filter(function(x){return x!==i});else tmp.push(i);draw()}},[b[2]]));
-      });
-      box.appendChild(g);
-      box.appendChild(h("button",{class:"btn",type:"button",style:"margin-top:14px",onclick:function(){draft.groups[gi]=tmp;berr="";closeSheet();renderBuilder()}},[_("Done \u00b7 ")+tmp.length+(tmp.length===1?" book":" books")+(tmp.length?" \u00b7 "+totalChapters(tmp)+_(" chapters"):"")]));
-    }
-    draw();
-  });
-}
-function builderNext(){
-  berr="";
-  if(bstep===1){
-    if(draft.mode==="clone"&&(draft.name||"").trim().toLowerCase()===draft.presetName.toLowerCase()){berr="Give your copy a new name. The ready-made original stays unchanged.";return renderBuilder()}
-    if(draft.mode!=="edit-custom"&&!draft.start){berr="Choose a start date.";return renderBuilder()}
-    if(!(draft.days>=1&&draft.days<=1000)){berr="Enter a number of days from 1 to 1000.";return renderBuilder()}
-    bstep=2;return renderBuilder();
-  }
-  if(bstep===2){
-    var gs=draft.groups.map(function(g,i){return{g:g,i:i}}).filter(function(x){return x.g.length});
-    var empty=draft.groups.findIndex(function(g){return !g.length});
-    if(!gs.length){berr="Add books to at least one group.";return renderBuilder()}
-    if(empty>=0&&draft.groups.length>1){berr=_("Group ")+(empty+1)+_(" has no books. Add some or remove the group.");return renderBuilder()}
-    bstep=3;return renderBuilder();
-  }
-}
-function builderFinish(kind){
-  var groups=draft.groups.filter(function(g){return g.length}).map(function(g){return g.slice()}),name=(draft.name||"").trim()||"My reading plan";
-  if(draft.mode==="edit-plan"){
-    var p=state.plans.filter(function(x){return x.id===draft.srcId})[0];if(!p){hideScreen();return}
-    p.name=name;p.start=draft.start;p.days=draft.days;p.order=draft.order;p.groups=groups;delete p._s;
-    Object.keys(p.done||{}).forEach(function(k){if(parseInt(k,10)>=p.days)delete p.done[k]});
-    Object.keys(p.ch||{}).forEach(function(k){if(parseInt(k,10)>=p.days)delete p.ch[k]});
-    viewDay=null;save();hideScreen();refreshAll();toast("Plan updated");return;
-  }
-  if(draft.mode==="edit-custom"){
-    var c=state.customs.filter(function(x){return x.id===draft.srcId})[0];if(!c){hideScreen();return}
-    c.name=name;c.days=draft.days;c.order=draft.order;c.groups=groups;
-    save();hideScreen();refreshAll();toast("Custom plan updated");return;
-  }
-  state.customs.push({id:"c"+Date.now(),name:name,days:draft.days,order:draft.order,groups:groups.map(function(g){return g.slice()})});
-  if(kind==="active"){
-    var plan={id:"p"+Date.now(),name:name,start:draft.start,days:draft.days,order:draft.order,groups:groups,done:{},ch:{}};
-    state.plans.push(plan);state.active=plan.id;viewDay=null;toast("Plan started");
-  }else toast("Saved to custom plans");
-  save();hideScreen();setTab("plans");refreshAll();
-}
-function builderStep3(body){
-  var tmp={days:draft.days,order:draft.order,groups:draft.groups.filter(function(g){return g.length})};
-  var sched=schedule(tmp);
-  body.appendChild(h("h1",{class:"pg",text:"Preview"}));
-  if(draft.mode==="new"||draft.mode==="clone")body.appendChild(h("p",{class:"note",text:"Save for later keeps it in Custom plans without starting it. Make active starts it on the start date and replaces your current active plan."}));
-  if(draft.mode==="edit-plan")body.appendChild(h("p",{class:"note",text:"Your progress is kept. It stays with the same day numbers."}));
-  var sum=h("div",{class:"card"},[h("b",{text:(draft.name||"").trim()||"My reading plan"}),h("div",{class:"muted small",text:draft.days+_(" days \u00b7 ")+niceY(draft.start)+" to "+niceY(addDays(draft.start,draft.days-1))})]);
-  tmp.groups.forEach(function(g,gi){
-    var n=totalChapters(g),per=n/draft.days,nu=unitsOf(g).length;
-    var txt=per>=1?_("about ")+(Math.round(per*10)/10)+_(" ch/day"):n+_(" ch total \u00b7 on ")+Math.min(nu,draft.days)+_(" of ")+draft.days+_(" days");
-    sum.appendChild(h("div",{class:"sumrow"},[h("span",{class:"gdot",style:"background:"+GCOLORS[gi%GCOLORS.length]+";margin-top:0"}),h("div",{style:"min-width:0"},[h("div",{class:"small",style:"font-weight:600",text:_("Group ")+(gi+1)}),h("div",{class:"muted small",text:groupNames(g)})]),h("div",{class:"sr",text:txt})]));
-  });
-  body.appendChild(sum);
-  var short=tmp.groups.map(function(g,i){return unitsOf(orderBooks(g,tmp.order)).length<draft.days?i+1:0}).filter(Boolean);
-  if(short.length)body.appendChild(h("p",{class:"note",text:_("Group ")+short.join(", ")+" "+(short.length>1?"have":"has")+_(" fewer chapters than days, so there will be rest days for ")+(short.length>1?"those groups":"that group")+"."}));
-  body.appendChild(h("h2",{class:"sec",text:"First days"}));
-  for(var d=0;d<Math.min(3,draft.days);d++){
-    var c=h("div",{class:"daycard",style:"content-visibility:visible"});
-    var info=h("div",{class:"dinfo"},[h("div",{class:"dh",text:_("Day ")+(d+1)+" \u00b7 "+nice(addDays(draft.start,d))})]);
-    sched[d].forEach(function(items,gi){info.appendChild(h("div",{class:"prow"},[h("span",{class:"gdot",style:"background:"+GCOLORS[gi%GCOLORS.length]}),h("div",{class:"pbody"},[h("div",{class:"plabel",style:"margin:0;font-weight:500",text:itemsText(items)})])]))});
-    c.appendChild(info);body.appendChild(c);
-  }
-  body.appendChild(h("p",{class:"note",text:_("Last day: every group ends on day ")+draft.days+"."}));
-}
-
-/* ---------- splash translations ---------- */
-var DESC_EN="Plan your Bible reading, choose your preferred translation and language, and connect directly to the Bible reading or listening service of your choice.";
-var TX={
- en:{choose:"Choose your language",tag:"A Bible Reading Planner",desc:DESC_EN,tap:"Tap to continue"},
- zh:{choose:"选择您的语言",tag:"圣经阅读计划",desc:"规划您的圣经阅读，选择您喜爱的译本和语言，并直接连接到您选择的圣经阅读或收听服务。",tap:"点击继续"},
- es:{choose:"Elige tu idioma",tag:"Un planificador de lectura bíblica",desc:"Planifica tu lectura de la Biblia, elige tu traducción e idioma preferidos y conéctate directamente con el servicio de lectura o audio bíblico que prefieras.",tap:"Toca para continuar"},
- ar:{choose:"اختر لغتك",tag:"مخطِّط لقراءة الكتاب المقدس",desc:"خطِّط لقراءتك للكتاب المقدس، واختر الترجمة واللغة المفضلتين لديك، وتواصل مباشرة مع خدمة قراءة الكتاب المقدس أو الاستماع إليه التي تختارها.",tap:"اضغط للمتابعة"},
- pt:{choose:"Escolha seu idioma",tag:"Um planejador de leitura da Bíblia",desc:"Planeje sua leitura da Bíblia, escolha sua tradução e idioma preferidos e conecte-se diretamente ao serviço de leitura ou áudio bíblico de sua preferência.",tap:"Toque para continuar"},
- ru:{choose:"Выберите язык",tag:"Планировщик чтения Библии",desc:"Планируйте чтение Библии, выбирайте предпочитаемый перевод и язык и переходите напрямую к выбранному сервису чтения или прослушивания Библии.",tap:"Нажмите, чтобы продолжить"},
- fr:{choose:"Choisissez votre langue",tag:"Un planificateur de lecture de la Bible",desc:"Planifiez votre lecture de la Bible, choisissez votre traduction et votre langue préférées, et accédez directement au service de lecture ou d\u2019écoute de la Bible de votre choix.",tap:"Touchez pour continuer"},
- de:{choose:"Wählen Sie Ihre Sprache",tag:"Ein Bibelleseplaner",desc:"Planen Sie Ihre Bibellese, wählen Sie Ihre bevorzugte Übersetzung und Sprache und gelangen Sie direkt zum Bibel-Lese- oder Hörangebot Ihrer Wahl.",tap:"Zum Fortfahren tippen"},
- ja:{choose:"言語を選択してください",tag:"聖書通読プランナー",desc:"聖書を読む計画を立て、お好みの翻訳と言語を選び、ご希望の聖書の閲覧・音声サービスに直接アクセスできます。",tap:"タップして続ける"},
- cs:{choose:"Vyberte svůj jazyk",tag:"Plánovač čtení Bible",desc:"Naplánujte si čtení Bible, vyberte si preferovaný překlad a jazyk a připojte se přímo ke službě pro čtení nebo poslech Bible, kterou si zvolíte.",tap:"Klepnutím pokračujte"},
- fa:{choose:"زبان خود را انتخاب کنید",tag:"برنامه‌ریز مطالعهٔ کتاب مقدس",desc:"مطالعهٔ کتاب مقدس خود را برنامه‌ریزی کنید، ترجمه و زبان مورد نظرتان را انتخاب کنید و مستقیماً به سرویس خواندن یا شنیدن کتاب مقدس مورد نظرتان متصل شوید.",tap:"برای ادامه ضربه بزنید"},
- ro:{choose:"Alegeți limba",tag:"Un planificator de citire a Bibliei",desc:"Planificați-vă citirea Bibliei, alegeți traducerea și limba preferate și conectați-vă direct la serviciul de citire sau de ascultare a Bibliei dorit.",tap:"Atingeți pentru a continua"},
- sk:{choose:"Vyberte svoj jazyk",tag:"Plánovač čítania Biblie",desc:"Naplánujte si čítanie Biblie, vyberte si preferovaný preklad a jazyk a pripojte sa priamo k službe na čítanie alebo počúvanie Biblie, ktorú si zvolíte.",tap:"Ťuknutím pokračujte"},
- sw:{choose:"Chagua lugha yako",tag:"Mpangilio wa Kusoma Biblia",desc:"Panga usomaji wako wa Biblia, chagua tafsiri na lugha unayopendelea, na uunganishwe moja kwa moja na huduma ya kusoma au kusikiliza Biblia unayoichagua.",tap:"Gusa ili kuendelea"},
- sv:{choose:"Välj ditt språk",tag:"En bibelläsningsplanerare",desc:"Planera din bibelläsning, välj din föredragna översättning och ditt språk och anslut direkt till den tjänst för bibelläsning eller bibellyssning som du väljer.",tap:"Tryck för att fortsätta"},
- th:{choose:"เลือกภาษาของคุณ",tag:"ตัวช่วยวางแผนอ่านพระคัมภีร์",desc:"วางแผนการอ่านพระคัมภีร์ของคุณ เลือกฉบับแปลและภาษาที่คุณชอบ และเชื่อมต่อโดยตรงกับบริการอ่านหรือฟังพระคัมภีร์ที่คุณเลือก",tap:"แตะเพื่อดำเนินการต่อ"}
- /* Plautdietsch (pdt) not yet translated: falls back to English */
-};
-var RTL={ar:1,fa:1},NOSP={ar:1,fa:1,th:1,zh:1,ja:1};
-function tx(k,id){var T=TX[id||uiLang()]||TX.en;return T[k]||TX.en[k]}
-function renderHero(){applyBookNames();$("tabPlansT").textContent=_("Reading plans");$("tabBibleT").textContent=_("Whole Bible");var s=$("heroSub");if(s)s.textContent=tx("tag");var r=RTL[uiLang()]?"rtl":"ltr";document.documentElement.setAttribute("lang",uiLang());document.querySelector(".app").dir=r}
-
-/* ---------- splash ---------- */
-var spReady=false,spAuto=null,spGone=false;
-function splashText(){
-  var id=uiLang(),L=langById(id),sp=$("splash");
-  sp.setAttribute("lang",id);sp.classList.toggle("nosp",!!NOSP[id]);
-  var dir=RTL[id]?"rtl":"ltr";
-  ["spTag","spDesc","spChoose","spTap"].forEach(function(x){$(x).dir=dir});
-  $("spTag").textContent=tx("tag");$("spDesc").textContent=tx("desc");
-  $("spChoose").textContent=tx("choose");$("spTap").textContent=tx("tap");
-  $("spFlag").textContent=L.flag;$("spNm").textContent=L.nat;$("spNm").dir="auto";
-}
-function splashSwap(){var sp=$("splash");sp.classList.add("swap");setTimeout(function(){splashText();sp.classList.remove("swap")},190)}
-function splashGo(){
-  if(spGone)return;spGone=true;clearTimeout(spAuto);
-  var sp=$("splash");sp.classList.add("out");setTimeout(function(){sp.classList.add("gone")},650);
-}
-function revealDesc(){
-  var g=$("spGd");g.style.display="flex";
-  setTimeout(function(){g.classList.add("in")},30);
-  setTimeout(function(){$("spTap").classList.add("show");spReady=true},750);
-}
-function splashStart(){
-  var sp=$("splash");
-  $("spChev").innerHTML="";$("spChev").appendChild(ic("chevron-down"));
-  splashText();
-  if(!state.prefs.ui)state.prefs.ui=(state.prefs.chosen&&TX[state.prefs.lang])?state.prefs.lang:"en";
-  var returning=!!state.prefs.chosen;
-  setTimeout(function(){$("spLogo").classList.add("in")},150);
-  setTimeout(function(){$("spG1").classList.add("in")},1000);
-  if(returning){
-    $("spG2").style.display="none";
-    setTimeout(revealDesc,1500);
-  }else{
-    setTimeout(function(){$("spG2").classList.add("in")},1500);
-  }
-  $("spLangBtn").onclick=function(e){
-    e.stopPropagation();clearTimeout(spAuto);
-    openLang({splash:true,onDone:function(){
-      state.prefs.chosen=1;save();
-      $("spG2").classList.remove("in");
-      splashSwap();
-      setTimeout(function(){$("spG2").style.display="none";revealDesc()},550);
-    }});
-  };
-  sp.onclick=function(e){if(e.target.closest("#spLangBtn"))return;splashGo()};
-}
-
-/* ---------- shell ---------- */
-function setTab(name){
-  state.prefs.tab=name;save();
-  $("tab-plans").hidden=name!=="plans";$("tab-bible").hidden=name!=="bible";
-  $("tabPlans").setAttribute("aria-selected",name==="plans");$("tabBible").setAttribute("aria-selected",name==="bible");
-}
-function refreshAll(){renderHero();renderControls();renderPlansTab();renderBibleTab()}
-$("tabPlans").onclick=function(){setTab("plans")};
-$("tabBible").onclick=function(){setTab("bible")};
-load();applyTheme();
-
-$("tpi").innerHTML=ic("calendar-event").innerHTML;$("tpg").innerHTML=ic("chevron-right").innerHTML;
-$("tbi").innerHTML=ic("book-2").innerHTML;$("tbg").innerHTML=ic("chevron-right").innerHTML;
-refreshAll();setTab(state.prefs.tab==="bible"?"bible":"plans");splashStart();
-
-/* header logo + sticky tab bar state */
-(function(){
-  var hl=$("heroLogo"),sl=$("spLogo");if(hl&&sl)hl.src=sl.src;
-  var tabs=document.querySelector(".tabs"),sent=$("tabSent");
-  var probe=document.createElement("div");
-  probe.style.cssText="position:absolute;visibility:hidden;pointer-events:none;padding-top:env(safe-area-inset-top,0px)";
-  document.body.appendChild(probe);
-  var raf=0;
-  function upd(){raf=0;var inset=parseFloat(getComputedStyle(probe).paddingTop)||0;
-    tabs.classList.toggle("stuck",sent.getBoundingClientRect().top<inset-0.5)}
-  function queue(){if(!raf)raf=requestAnimationFrame(upd)}
-  document.addEventListener("scroll",queue,true);window.addEventListener("resize",queue);
-  upd();
-})();
-
-/* temporary logo-glow adjuster: long-press the header logo.
-   The glow is drawn on a canvas that covers the whole header, from an exact distance
-   field around the logo's shape, so it can be any size without ever showing a box edge. */
-(function(){
-  var logo=$("heroLogo"),hero=document.querySelector(".hero"),cv=$("glowCv"),panel=$("glowPanel");
-  var T=$("glT"),F=$("glF"),O=$("glO"),To=$("glTo"),Fo=$("glFo"),Oo=$("glOo");
-  var DEF={t:0.9,f:3.8,o:85};
-  var vals={t:DEF.t,f:DEF.f,o:DEF.o};
-  var LIM={t:[0,400],f:[0,400],o:[0,100]};
-  var SLOW=10; /* how many times finer than a normal slider */
-  var off=document.createElement("canvas"),oc=off.getContext&&off.getContext("2d"),cx=cv.getContext&&cv.getContext("2d");
-  var gw=0,gh=0,S=1,dist=null,maskKey="",img=null,raf=0;
-  var INF=1e20;
-
-  /* squared Euclidean distance transform (Felzenszwalb & Huttenlocher), one line */
-  function dt1(f,n,d,v,z){
-    var k=0,q,s;v[0]=0;z[0]=-INF;z[1]=INF;
-    for(q=1;q<n;q++){
-      s=((f[q]+q*q)-(f[v[k]]+v[k]*v[k]))/(2*q-2*v[k]);
-      while(s<=z[k]){k--;s=((f[q]+q*q)-(f[v[k]]+v[k]*v[k]))/(2*q-2*v[k])}
-      k++;v[k]=q;z[k]=s;z[k+1]=INF;
-    }
-    k=0;
-    for(q=0;q<n;q++){while(z[k+1]<q)k++;d[q]=(q-v[k])*(q-v[k])+f[v[k]]}
-  }
-
-  function buildMask(){
-    if(!oc||!cx)return false;
-    var hr=hero.getBoundingClientRect(),lr=logo.getBoundingClientRect();
-    var hw=hr.width,hh=hr.height;
-    if(!hw||!hh||!logo.complete||!logo.naturalWidth||!lr.width)return false;
-    var dpr=Math.min(window.devicePixelRatio||1,3);
-    var s=Math.min(dpr,Math.sqrt(1500000/(hw*hh)));
-    var w=Math.max(1,Math.round(hw*s)),h=Math.max(1,Math.round(hh*s));
-    var key=[w,h,Math.round((lr.left-hr.left)*100),Math.round((lr.top-hr.top)*100),Math.round(lr.width),Math.round(lr.height),s.toFixed(3)].join();
-    if(key===maskKey&&dist)return true;
-    off.width=w;off.height=h;oc.clearRect(0,0,w,h);
-    oc.drawImage(logo,(lr.left-hr.left)*s,(lr.top-hr.top)*s,lr.width*s,lr.height*s);
-    var a;try{a=oc.getImageData(0,0,w,h).data}catch(err){return false}var n=w*h,i,x,y;
-    dist=new Float32Array(n);
-    for(i=0;i<n;i++)dist[i]=a[i*4+3]>=64?0:INF;
-    var m=Math.max(w,h),f=new Float64Array(m),d=new Float64Array(m),v=new Int32Array(m),z=new Float64Array(m+1);
-    for(y=0;y<h;y++){
-      for(x=0;x<w;x++)f[x]=dist[y*w+x];
-      dt1(f,w,d,v,z);
-      for(x=0;x<w;x++)dist[y*w+x]=d[x];
-    }
-    for(x=0;x<w;x++){
-      for(y=0;y<h;y++)f[y]=dist[y*w+x];
-      dt1(f,h,d,v,z);
-      for(y=0;y<h;y++)dist[y*w+x]=d[y];
-    }
-    gw=w;gh=h;S=s;maskKey=key;img=null;
-    return true;
-  }
-
-  function render(){
-    raf=0;
-    if(!buildMask())return;
-    var t=vals.t,f=vals.f,o=vals.o/100,i,n=gw*gh;
-    if(cv.width!==gw||cv.height!==gh){cv.width=gw;cv.height=gh}
-    if(!img)img=cx.createImageData(gw,gh);
-    var px=img.data;
-    px.fill(0);
-    if(o>0&&(t>0||f>0)){
-      var reach=t+f+1,reach2=reach*reach*S*S,k=1/S;
-      for(i=0;i<n;i++){
-        var d2=dist[i];
-        if(d2>reach2)continue;
-        var dd=Math.sqrt(d2)*k,al;
-        if(f>0){
-          if(dd<=t)al=1;else{var u=(dd-t)/f;al=u>=1?0:1-u*u*(3-2*u)}
-        }else{
-          al=(t-dd)*S+.5;al=al<0?0:al>1?1:al;
-        }
-        if(al>0){var j=i*4;px[j]=255;px[j+1]=255;px[j+2]=255;px[j+3]=Math.round(al*o*255)}
-      }
-    }
-    cx.putImageData(img,0,0);
-  }
-  function schedule(){if(!raf)raf=requestAnimationFrame(render)}
-  window.__glowRender=render;
-
-  function readouts(){
-    To.textContent=vals.t.toFixed(1)+" px";Fo.textContent=vals.f.toFixed(1)+" px";Oo.textContent=vals.o.toFixed(1)+"%";
-    T.setAttribute("aria-valuenow",vals.t.toFixed(1));F.setAttribute("aria-valuenow",vals.f.toFixed(1));O.setAttribute("aria-valuenow",vals.o.toFixed(1));
-  }
-  function onChange(){readouts();schedule()}
-
-  /* A jog slider: the knob always sits in the middle. Drag it left/right to change the value
-     (SLOW times finer than a normal slider); when you let go it springs back to the middle
-     so you can keep sliding the same way as many times as you like. */
-  function jog(el,key){
-    var thumb=el.querySelector(".jthumb"),drag=null;
-    function setOff(px){thumb.style.transform="translateX("+px+"px)"}
-    el.addEventListener("pointerdown",function(e){
-      var W=el.getBoundingClientRect().width,travel=Math.max(40,W-30);
-      drag={x0:e.clientX||0,v0:vals[key],travel:travel,k:(LIM[key][1]-LIM[key][0])/travel/SLOW};
-      try{el.setPointerCapture(e.pointerId)}catch(_){}
-      el.classList.add("drag");e.preventDefault();
-    });
-    el.addEventListener("pointermove",function(e){
-      if(!drag)return;
-      var half=drag.travel/2,off=Math.max(-half,Math.min(half,(e.clientX||0)-drag.x0));
-      setOff(off);
-      var v=drag.v0+off*drag.k;
-      vals[key]=Math.max(LIM[key][0],Math.min(LIM[key][1],v));
-      onChange();
-    });
-    function end(){if(!drag)return;drag=null;el.classList.remove("drag");setOff(0)}
-    ["pointerup","pointercancel","lostpointercapture"].forEach(function(n){el.addEventListener(n,end)});
-  }
-  jog(T,"t");jog(F,"f");jog(O,"o");
-  function setVals(t,f,o){vals.t=t;vals.f=f;vals.o=o;onChange()}
-  $("glR").onclick=function(){setVals(DEF.t,DEF.f,DEF.o)};
-  $("glD").onclick=function(){panel.hidden=true};
-  setVals(DEF.t,DEF.f,DEF.o);
-  window.__glow={vals:vals,render:render};
-  logo.addEventListener("load",schedule);
-  window.addEventListener("resize",schedule);
-  if(window.ResizeObserver)new ResizeObserver(schedule).observe(hero);
-  schedule();
-
-  /* press and hold the logo for 10 seconds to open the (hidden) glow panel */
-  var timer=0,sx=0,sy=0;
-  function cancel(){if(timer){clearTimeout(timer);timer=0}}
-  logo.addEventListener("pointerdown",function(e){
-    cancel();sx=e.clientX||0;sy=e.clientY||0;
-    timer=setTimeout(function(){timer=0;panel.hidden=false},10000);
-  });
-  logo.addEventListener("pointermove",function(e){
-    if(timer&&(Math.abs((e.clientX||0)-sx)>30||Math.abs((e.clientY||0)-sy)>30))cancel();
-  });
-  ["pointerup","pointercancel","pointerleave"].forEach(function(n){logo.addEventListener(n,cancel)});
-  logo.addEventListener("contextmenu",function(e){e.preventDefault()});
-})();
-
-/* PWA: offline support (only on real http(s) hosting) */
-(function(){try{if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol))window.addEventListener('load',function(){navigator.serviceWorker.register('sw.js').catch(function(){})})}catch(e){}})();
