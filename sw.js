@@ -1,6 +1,6 @@
 /* Bible Bridge service worker.
    Change VERSION whenever you upload a new index.html so phones pick up the update. */
-const VERSION = 'v2.1.7';
+const VERSION = 'v2.2.0';
 const CACHE = 'bible-bridge-' + VERSION;
 const CORE = ['./', 'index.html', 'style.css', 'app.js', 'images.js', 'reader.js', 'reader.css', 'manifest.webmanifest'];
 
@@ -45,6 +45,7 @@ self.addEventListener('fetch', event => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;           // fonts, Bible sites, etc. go straight to the network
+  if (/\/langs(-index\.json|\.dat)$/.test(url.pathname)) return;   // language packs: the app fetches and keeps these itself
   if (req.headers.has('range')) return;                      // Bible text is read piece by piece (byte ranges): the reader keeps its own offline copy
   if (req.mode === 'navigate') { event.respondWith(openApp(req)); return; }
   event.respondWith(
