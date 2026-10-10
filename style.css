@@ -386,3 +386,11 @@ a.chbtn:active{opacity:.8;transform:scale(.95)}
 :root:not([data-theme="light"]) .dcirc.hold{--rc:#f1f4fa}
 :root:not([data-theme="light"]) .dcirc.hold .dcin{background:#59616e}
 }
+
+.btn.behind{position:relative}
+.btn.behind .bhic{position:absolute;left:10px;top:50%;transform:translateY(-50%);display:inline-flex;color:#ffb020}
+.btn.behind .bhic .ic,.btn.behind .bhic svg{width:22px;height:22px}
+.lgroup{border-bottom:1px solid var(--line,rgba(0,0,0,.08))}
+.lghead .chev{display:inline-flex;transition:transform .15s}
+.lgbody{padding:0 0 6px 10px}
+.lgbody[hidden]{display:none}
