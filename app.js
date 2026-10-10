@@ -1226,9 +1226,9 @@ var TX={
 };
 var RTL={},NOSP={};
 /* ---------- language packs ----------
-   Every menu language except English is its own small file in the lang folder (lang/de.json, lang/hi.json ...).
-   lang/index.json lists them with a version stamp. A language is downloaded when you pick it, kept on this device, and
-   can be removed again. The original 17 languages download quietly the first time the app is online. */
+   Every menu language except English lives in one file, langs.dat. The small langs-index.json says where each language
+   starts and ends, so the app downloads only the bytes of the language you pick. A downloaded language is kept on this
+   device and can be removed again. The original 17 languages download quietly the first time the app is online. */
 var LP_REC="bb_langs",LP_SEED="bb_langs_seed",LP_MIR="bb_lpmirror",LP_IDXK="bb_lpidx",LP_CACHE="bb-lang";
 var UI17={zh:1,es:1,ar:1,pt:1,ru:1,fr:1,de:1,ja:1,cs:1,fa:1,pl:1,pdt:1,ro:1,sk:1,sw:1,sv:1,th:1};
 /* languages whose menus are not translated yet: they work as Bible languages, and the menus use the substitute language shown here */
@@ -1258,17 +1258,24 @@ function lpDelStored(id){
   return lpStore().then(function(c){return c.delete("lang/"+id)}).catch(function(){})}
 function lpIndex(){
   if(lpIdx)return Promise.resolve(lpIdx);
-  return fetch("lang/index.json",{cache:"no-store"}).then(function(r){if(!r.ok)throw new Error("http");return r.json()})
+  return fetch("langs-index.json",{cache:"no-store"}).then(function(r){if(!r.ok)throw new Error("http");return r.json()})
     .then(function(j){if(!j||!j.n)throw new Error("bad");lpIdx=j;lsSet(LP_IDXK,j);return j})
     .catch(function(){var j=lsGet(LP_IDXK,null);if(j&&j.n){lpIdx=j;return j}throw new Error("offline")});
 }
-/* download one language: lang/<id>.json */
+/* fetch just this language's bytes out of langs.dat */
 function lpFetch(id){
   return lpIndex().then(function(ix){
-    var hv=ix.n[id];if(!hv)throw new Error("none");
-    return fetch("lang/"+id+".json?v="+hv).then(function(r){if(!r.ok)throw new Error("http");return r.json()}).then(function(d){
-      if(!d||d.id!==id||!d.i||!d.b)throw new Error("bad");
-      return{v:hv,d:d};
+    var e=ix.n[id];if(!e)throw new Error("none");
+    return fetch("langs.dat?v="+ix.v,{headers:{Range:"bytes="+e[0]+"-"+(e[0]+e[1]-1)}}).then(function(r){
+      if(!r.ok)throw new Error("http");
+      return r.arrayBuffer().then(function(buf){
+        var u=new Uint8Array(buf);
+        if(r.status!==206)u=u.subarray(e[0],e[0]+e[1]);   /* a server that ignores ranges sends the whole file: cut our piece out */
+        if(u.length!==e[1])throw new Error("size");
+        var d=JSON.parse(new TextDecoder("utf-8").decode(u));
+        if(!d||!d.i||!d.b)throw new Error("bad");
+        return{v:ix.v,d:d};
+      });
     });
   });
 }
@@ -1303,7 +1310,7 @@ function lpSync(){
   if(lpSyncing||navigator.onLine===false)return;lpSyncing=true;
   lpIndex().then(function(ix){
     var have=lsGet(LP_REC,{}),seed=lsGet(LP_SEED,[]),todo=[];
-    Object.keys(have).forEach(function(id){if(ix.n[id]&&have[id]!==ix.n[id])todo.push(id)});
+    Object.keys(have).forEach(function(id){if(have[id]!==ix.v&&ix.n[id])todo.push(id)});
     Object.keys(UI17).forEach(function(id){if(!have[id]&&seed.indexOf(id)<0&&ix.n[id]&&todo.indexOf(id)<0)todo.push(id)});
     var cur=uiLang();todo.sort(function(a,b){return(a===cur?0:1)-(b===cur?0:1)});
     var i=0;
